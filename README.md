@@ -90,4 +90,4 @@ This project is for demonstration and educational purposes.
 ## Credits
 
 - [Azure Document Intelligence (Form Recognizer)](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/)
--
+
