@@ -1,0 +1,7 @@
+{
+  "name": "trinity",
+  "primaryEndpoints": {
+    "blob": "https://your_account_name.blob.core.windows.net/"
+  },
+  "container": "trinity"
+}
