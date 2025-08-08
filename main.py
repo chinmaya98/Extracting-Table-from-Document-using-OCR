@@ -7,7 +7,7 @@ from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
 
-from utils.currency_utils import contains_money  # I'll provide this next
+from utils.currency_utils import contains_money  # Assumes this exists
 
 load_dotenv()
 
@@ -24,8 +24,7 @@ client = DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCreden
 st.set_page_config(page_title="Budget Table Extractor", layout="wide")
 st.title("📄 Budget Table Extractor")
 
-uploaded_file = st.file_uploader("Upload a PDF or Excel file", type=["pdf", "xlsx", "xls"])
-
+# Get files from Blob Storage
 blob_files = []
 selected_blob_file = None
 
@@ -35,7 +34,7 @@ if blob_connection_string and blob_container:
         container_client = blob_service_client.get_container_client(blob_container)
         blob_files = [b.name for b in container_client.list_blobs() if b.name.lower().endswith(('.pdf', '.xlsx', '.xls'))]
         if blob_files:
-            selected_blob_file = st.selectbox("Or select a file from Blob Storage", blob_files)
+            selected_blob_file = st.selectbox("Select a file from Blob Storage", blob_files)
     except Exception as e:
         st.error(f"Error accessing Blob Storage: {e}")
 
@@ -77,20 +76,7 @@ def process_file(file_bytes, file_ext):
     else:
         return []
 
-if uploaded_file and st.button("Extract Tables from Uploaded File"):
-    try:
-        file_bytes = uploaded_file.read()
-        ext = os.path.splitext(uploaded_file.name)[1].lower()
-        tables = process_file(file_bytes, ext)
-        filtered_tables = [df for df in tables if contains_money(df)]
-        st.session_state["filtered_tables"] = filtered_tables
-
-        if not filtered_tables:
-            st.warning("⚠️ No budget-related tables found in the uploaded document.")
-    except Exception as e:
-        st.error(f"❌ Error during file processing: {e}")
-
-if selected_blob_file and st.button("Extract Tables from Blob File"):
+if selected_blob_file and st.button("Extract Tables from Selected Blob File"):
     try:
         blob_client = blob_service_client.get_blob_client(container=blob_container, blob=selected_blob_file)
         blob_bytes = blob_client.download_blob().readall()
