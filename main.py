@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import io
+import re
 from dotenv import load_dotenv
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
@@ -92,8 +93,18 @@ if selected_blob_file and st.button("Extract Tables from Selected Blob File"):
 
 if st.session_state["filtered_tables"]:
     for i, df in enumerate(st.session_state["filtered_tables"]):
+
+        # Remove empty/blank rows
+        df = df[~df.apply(lambda row: row.astype(str).str.strip().eq('').all(), axis=1)].reset_index(drop=True)
+        
         st.subheader(f"📊 Table {i+1}")
-        st.dataframe(df)
+
+        # Convert DataFrame to HTML without headers and index
+        html_table = df.to_html(index=False, header=False, border=1)
+
+        # Render HTML in Streamlit
+        st.markdown(html_table, unsafe_allow_html=True)
+
 
     combined_csv = pd.concat(st.session_state["filtered_tables"], ignore_index=True).to_csv(index=False).encode("utf-8")
     combined_json = pd.concat(st.session_state["filtered_tables"], ignore_index=True).to_json(orient="records", indent=2).encode("utf-8")
