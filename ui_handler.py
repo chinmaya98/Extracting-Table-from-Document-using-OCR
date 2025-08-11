@@ -42,90 +42,99 @@ def deduplicate_columns(columns):
     return new_cols
 
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
-    st.session_state["filtered_tables"] = []
+    if "processed_file" not in st.session_state or st.session_state["processed_file"] != selected_blob_file:
+        st.session_state["processed_file"] = selected_blob_file
+        st.session_state["filtered_tables"] = []
+        st.session_state["excel_sheets"] = {}
+        st.session_state["processed"] = False
+
     ext = os.path.splitext(selected_blob_file)[1].lower()
 
-    if ext == ".pdf":
-        if st.button("Extract Tables from Selected  Blob File"):
-            try:
-                blob_bytes = blob_manager.download_file(selected_blob_file)
+    if st.button("Extract table from Files") and not st.session_state["processed"]:
+        try:
+            blob_bytes = blob_manager.download_file(selected_blob_file)
+
+            if ext == ".pdf":
                 tables = extractor.extract_from_pdf(blob_bytes)
                 filtered_tables = extractor.filter_tables(tables)
                 st.session_state["filtered_tables"] = filtered_tables
+                st.session_state["excel_sheets"] = {}
 
                 if not filtered_tables:
                     st.warning("⚠️ No tables found in the selected PDF file.")
-            except Exception as e:
-                st.error(f"❌ Error processing PDF file: {e}")
 
-        # Display PDF tables if any
-        if st.session_state["filtered_tables"]:
-            all_cleaned_tables = []
-            for i, df in enumerate(st.session_state["filtered_tables"], start=1):
-                df = extractor.clean_table(df).fillna("")
-                df.columns = deduplicate_columns(df.columns)
-                all_cleaned_tables.append(df)
+            elif ext in [".xlsx", ".xls"]:
+                _, _, _, sheets = read_csv_or_excel_file(blob_bytes, selected_blob_file)
+                st.session_state["excel_sheets"] = sheets
+                st.session_state["filtered_tables"] = {}
 
-                st.subheader(f"📊 Table {i}")
-                st.dataframe(df)
-
-                csv_data = df.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    f"⬇️ Download Table {i} as CSV",
-                    csv_data,
-                    f"table_{i}.csv",
-                    "text/csv"
-                )
-
-            combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-            combined_csv = combined_df.to_csv(index=False).encode("utf-8")
-            combined_json = combined_df.to_json(orient="records", indent=2).encode("utf-8")
-
-            st.download_button("⬇️ Download All Tables as CSV", combined_csv, "budget_tables.csv", "text/csv")
-            st.download_button("⬇️ Download All Tables as JSON", combined_json, "budget_tables.json", "application/json")
-
-    elif ext in [".xlsx", ".xls"]:
-        if st.button("Process Excel File"):
-            try:
-                blob_bytes = blob_manager.download_file(selected_blob_file)
-                tables, _, _, sheets = read_csv_or_excel_file(blob_bytes, selected_blob_file)
                 if not sheets:
                     st.warning("⚠️ No sheets found in the Excel file.")
-                    return ext
 
-                all_cleaned_tables = []
-                for sheet_name, sheet_df in sheets.items():
-                    if sheet_df.empty:
-                        st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
-                        continue
+            else:
+                st.info("Unsupported file format. Please select a PDF or Excel file.")
+                st.session_state["filtered_tables"] = []
+                st.session_state["excel_sheets"] = {}
 
-                    # Deduplicate and clean columns
-                    sheet_df.columns = deduplicate_columns(sheet_df.columns)
-                    all_cleaned_tables.append(sheet_df)
+            st.session_state["processed"] = True
 
-                    st.subheader(f"📊 Sheet: {sheet_name}")
-                    st.dataframe(sheet_df, use_container_width=True)
+        except Exception as e:
+            st.error(f"❌ Error processing file: {e}")
 
-                    csv_data = sheet_df.to_csv(index=False).encode("utf-8")
-                    st.download_button(
-                        label=f"Download {sheet_name} as CSV",
-                        data=csv_data,
-                        file_name=f"{selected_blob_file}_{sheet_name}.csv",
-                        mime="text/csv"
-                    )
+    # Show extracted tables for PDF
+    if ext == ".pdf" and st.session_state.get("filtered_tables"):
+        all_cleaned_tables = []
+        for i, df in enumerate(st.session_state["filtered_tables"], start=1):
+            df = extractor.clean_table(df).fillna("")
+            df.columns = deduplicate_columns(df.columns)
+            all_cleaned_tables.append(df)
 
-                # Combined downloads
-                combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-                combined_csv = combined_df.to_csv(index=False).encode("utf-8")
-                combined_json = combined_df.to_json(orient="records", indent=2).encode("utf-8")
+            st.subheader(f"📊 Table {i}")
+            st.dataframe(df)
 
-                st.download_button("⬇️ Download All Sheets as CSV", combined_csv, "budget_sheets.csv", "text/csv")
-                st.download_button("⬇️ Download All Sheets as JSON", combined_json, "budget_sheets.json", "application/json")
+            csv_data = df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                f"⬇️ Download Table {i} as CSV",
+                csv_data,
+                f"table_{i}.csv",
+                "text/csv"
+            )
 
-            except Exception as e:
-                st.error(f"❌ Error processing Excel file: {e}")
+        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
+        combined_csv = combined_df.to_csv(index=False).encode("utf-8")
+        combined_json = combined_df.to_json(orient="records", indent=2).encode("utf-8")
 
-    else:
-        st.info("Unsupported file format. Please select a PDF or Excel file.")
+        st.download_button("⬇️ Download All Tables as CSV", combined_csv, "budget_tables.csv", "text/csv")
+        st.download_button("⬇️ Download All Tables as JSON", combined_json, "budget_tables.json", "application/json")
+
+    # Show sheets for Excel
+    if ext in [".xlsx", ".xls"] and st.session_state.get("excel_sheets"):
+        sheets = st.session_state["excel_sheets"]
+        all_cleaned_tables = []
+        for sheet_name, sheet_df in sheets.items():
+            if sheet_df.empty:
+                st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
+                continue
+
+            sheet_df.columns = deduplicate_columns(sheet_df.columns)
+            all_cleaned_tables.append(sheet_df)
+
+            st.subheader(f"📊 Sheet: {sheet_name}")
+            st.dataframe(sheet_df, use_container_width=True)
+
+            csv_data = sheet_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label=f"Download {sheet_name} as CSV",
+                data=csv_data,
+                file_name=f"{selected_blob_file}_{sheet_name}.csv",
+                mime="text/csv"
+            )
+
+        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
+        combined_csv = combined_df.to_csv(index=False).encode("utf-8")
+        combined_json = combined_df.to_json(orient="records", indent=2).encode("utf-8")
+
+        st.download_button("⬇️ Download All Sheets as CSV", combined_csv, "budget_sheets.csv", "text/csv")
+        st.download_button("⬇️ Download All Sheets as JSON", combined_json, "budget_sheets.json", "application/json")
 
     return ext
