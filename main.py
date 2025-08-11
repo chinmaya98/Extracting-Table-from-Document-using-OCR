@@ -9,9 +9,11 @@ def main():
 
     config = AzureConfig()
     blob_manager = None
-    extractor = TableExtractor(config.endpoint, config.key)
+    document_client = config.get_document_client()
+    extractor = TableExtractor(document_client)
     if config.blob_connection_string and config.blob_container:
-        blob_manager = BlobManager(config.blob_connection_string, config.blob_container)
+        blob_service_client = config.get_blob_service_client()
+        blob_manager = BlobManager(blob_service_client, config.blob_container)
 
     blob_files = []
     selected_blob_file = None
