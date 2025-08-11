@@ -20,7 +20,6 @@ def handle_blob_interaction(blob_manager):
             st.error(f"Error accessing Blob Storage: {e}")
     return selected_blob_file
 
-
 def deduplicate_columns(columns):
     seen = {}
     new_cols = []
@@ -40,6 +39,32 @@ def deduplicate_columns(columns):
             clean_name = f"{clean_name}{seen[clean_name]}"
         new_cols.append(clean_name)
     return new_cols
+
+def add_download_buttons(df: pd.DataFrame, label_prefix: str, index: int = None):
+    """
+    Adds CSV and JSON download buttons for a given DataFrame.
+    
+    Parameters:
+    - df: The pandas DataFrame to download.
+    - label_prefix: A prefix for button labels like 'Table' or 'Sheet'.
+    - index: Optional index to add to the filename and labels (e.g. 1, 2, 3).
+    """
+    suffix = f"_{index}" if index is not None else ""
+    csv_data = df.to_csv(index=False).encode("utf-8")
+    json_data = df.to_json(orient="records", indent=2).encode("utf-8")
+
+    st.download_button(
+        label=f"⬇️ Download {label_prefix}{suffix} as CSV",
+        data=csv_data,
+        file_name=f"{label_prefix.lower()}{suffix}.csv",
+        mime="text/csv"
+    )
+    st.download_button(
+        label=f"⬇️ Download {label_prefix}{suffix} as JSON",
+        data=json_data,
+        file_name=f"{label_prefix.lower()}{suffix}.json",
+        mime="application/json"
+    )
 
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
     if "processed_file" not in st.session_state or st.session_state["processed_file"] != selected_blob_file:
@@ -92,26 +117,16 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
             st.subheader(f"📊 Table {i}")
             st.dataframe(df)
 
-            csv_data = df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                f"⬇️ Download Table {i} as CSV",
-                csv_data,
-                f"table_{i}.csv",
-                "text/csv"
-            )
+            add_download_buttons(df, label_prefix="Table", index=i)
 
         combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-        combined_csv = combined_df.to_csv(index=False).encode("utf-8")
-        combined_json = combined_df.to_json(orient="records", indent=2).encode("utf-8")
-
-        st.download_button("⬇️ Download All Tables as CSV", combined_csv, "budget_tables.csv", "text/csv")
-        st.download_button("⬇️ Download All Tables as JSON", combined_json, "budget_tables.json", "application/json")
+        add_download_buttons(combined_df, label_prefix="All_Tables")
 
     # Show sheets for Excel
     if ext in [".xlsx", ".xls"] and st.session_state.get("excel_sheets"):
         sheets = st.session_state["excel_sheets"]
         all_cleaned_tables = []
-        for sheet_name, sheet_df in sheets.items():
+        for i, (sheet_name, sheet_df) in enumerate(sheets.items(), start=1):
             if sheet_df.empty:
                 st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
                 continue
@@ -122,19 +137,9 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
             st.subheader(f"📊 Sheet: {sheet_name}")
             st.dataframe(sheet_df, use_container_width=True)
 
-            csv_data = sheet_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label=f"Download {sheet_name} as CSV",
-                data=csv_data,
-                file_name=f"{selected_blob_file}_{sheet_name}.csv",
-                mime="text/csv"
-            )
+            add_download_buttons(sheet_df, label_prefix=f"Sheet_{sheet_name}")
 
         combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-        combined_csv = combined_df.to_csv(index=False).encode("utf-8")
-        combined_json = combined_df.to_json(orient="records", indent=2).encode("utf-8")
-
-        st.download_button("⬇️ Download All Sheets as CSV", combined_csv, "budget_sheets.csv", "text/csv")
-        st.download_button("⬇️ Download All Sheets as JSON", combined_json, "budget_sheets.json", "application/json")
+        add_download_buttons(combined_df, label_prefix="All_Sheets")
 
     return ext
