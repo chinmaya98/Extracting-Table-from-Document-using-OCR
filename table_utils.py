@@ -88,24 +88,13 @@ class TableExtractor:
                 cells = [["" for _ in range(ncols)] for _ in range(nrows)]
                 for cell in table.cells:
                     cells[cell.row_index][cell.column_index] = cell.content
-                df = pd.DataFrame(cells)
+                
+                # Use the first row as the header
+                df = pd.DataFrame(cells[1:], columns=cells[0])
                 tables.append(df)
             return tables
         except Exception as e:
             raise RuntimeError(f"Failed to extract tables from PDF: {e}")
-
-    def extract_from_excel(self, file_bytes):
-        """Extracts tables from an Excel file using pandas."""
-        try:
-            excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
-            tables = []
-            for sheet in excel_file.sheet_names:
-                df = excel_file.parse(sheet)
-                if not df.empty:
-                    tables.append(df)
-            return tables
-        except Exception as e:
-            raise RuntimeError(f"Failed to extract tables from Excel: {e}")
 
     def process_file(self, file_bytes, file_ext):
         """Processes a file and extracts tables based on its extension."""
@@ -113,7 +102,8 @@ class TableExtractor:
             if file_ext == ".pdf":
                 return self.extract_from_pdf(file_bytes)
             elif file_ext in [".xlsx", ".xls"]:
-                return self.extract_from_excel(file_bytes)
+                tables, _, _, _ = read_csv_or_excel_file(file_bytes, "")
+                return tables
             else:
                 return []
         except Exception as e:
@@ -140,3 +130,54 @@ def get_blob_manager_and_extractor():
     blob_manager = BlobManager(blob_service_client, config.blob_container)
     extractor = TableExtractor(document_client)
     return blob_manager, extractor
+
+def read_csv_or_excel_file(file_bytes, file_name):
+    """Read CSV or Excel file and return tables as DataFrames with sheet names as headings."""
+    try:
+        file_extension = file_name.lower().split('.')[-1]
+
+        if file_extension == 'csv':
+            # Read CSV file
+            df = pd.read_csv(io.BytesIO(file_bytes))
+            return [("CSV", df)], None, [], {}
+        elif file_extension in ['xlsx', 'xls']:
+            # Read Excel file - handle multiple sheets
+            excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
+            sheets = {}
+            tables = []
+            for sheet_name in excel_file.sheet_names:
+                # Read without header to get raw data
+                sheet_df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
+
+                # Generate Excel-style column names (A, B, C, etc.)
+                excel_columns = generate_excel_column_names(len(sheet_df.columns))
+                sheet_df.columns = excel_columns
+
+                # Set index to start from 1 (like Excel row numbers)
+                sheet_df.index = range(1, len(sheet_df) + 1)
+
+                sheets[sheet_name] = sheet_df
+                tables.append((sheet_name, sheet_df))
+
+            # Debugging: Print the sheet names and number of sheets processed
+            print(f"Processed sheets: {list(sheets.keys())}")
+            return tables, None, [], sheets
+        else:
+            return None, None, [], {}
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to read file '{file_name}': {e}")
+
+def generate_excel_column_names(num_columns):
+    """Generate Excel-style column names (A, B, C, ..., AA, AB, etc.)"""
+    columns = []
+    for i in range(num_columns):
+        col_name = ""
+        temp = i
+        while temp >= 0:
+            col_name = chr(65 + (temp % 26)) + col_name
+            temp = temp // 26 - 1
+            if temp < 0:
+                break
+        columns.append(col_name)
+    return columns
