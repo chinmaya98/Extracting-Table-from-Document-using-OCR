@@ -6,6 +6,7 @@ from azure.storage.blob import BlobServiceClient
 from utils.currency_utils import contains_money
 import os
 from dotenv import load_dotenv
+from PIL import Image
 
 class AzureConfig:
     """
@@ -99,13 +100,20 @@ class TableExtractor:
     def process_file(self, file_bytes, file_ext):
         """Processes a file and extracts tables based on its extension."""
         try:
-            if file_ext == ".pdf":
+            if file_ext in [".pdf"]:
                 return self.extract_from_pdf(file_bytes)
             elif file_ext in [".xlsx", ".xls"]:
                 tables, _, _, _ = read_csv_or_excel_file(file_bytes, "")
                 return tables
+            elif file_ext in [".jpg", ".jpeg", ".png", ".tiff"]:
+                # Convert image to PDF for Azure Document Intelligence
+                image = Image.open(io.BytesIO(file_bytes))
+                pdf_bytes = io.BytesIO()
+                image.save(pdf_bytes, format="PDF")
+                pdf_bytes.seek(0)
+                return self.extract_from_pdf(pdf_bytes.read())
             else:
-                return []
+                raise ValueError("Unsupported file format. Please upload a PDF, Excel, or image file.")
         except Exception as e:
             raise RuntimeError(f"Failed to process file: {e}")
 
@@ -138,33 +146,44 @@ def read_csv_or_excel_file(file_bytes, file_name):
 
         if file_extension == 'csv':
             # Read CSV file
-            df = pd.read_csv(io.BytesIO(file_bytes))
-            df = df.fillna("")  # Replace NaN with empty strings
-            return [("CSV", df)], None, [], {}
+            try:
+                df = pd.read_csv(io.BytesIO(file_bytes))
+                df = df.fillna("")  # Replace NaN with empty strings
+                return [("CSV", df)], None, [], {}
+            except Exception as e:
+                raise RuntimeError(f"Error reading CSV file: {e}")
+
         elif file_extension in ['xlsx', 'xls']:
             # Read Excel file - handle multiple sheets
-            excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
-            sheets = {}
-            tables = []
-            for sheet_name in excel_file.sheet_names:
-                # Read without header to get raw data
-                sheet_df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
-                sheet_df = sheet_df.fillna("")  # Replace NaN with empty strings
+            try:
+                excel_file = pd.ExcelFile(io.BytesIO(file_bytes))
+                sheets = {}
+                tables = []
+                for sheet_name in excel_file.sheet_names:
+                    # Read without header to get raw data
+                    sheet_df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
+                    if sheet_df.empty:
+                        print(f"Warning: Sheet '{sheet_name}' is empty and will be skipped.")
+                        continue
+                    sheet_df = sheet_df.fillna("")  # Replace NaN with empty strings
 
-                # Generate Excel-style column names (A, B, C, etc.)
-                excel_columns = generate_excel_column_names(len(sheet_df.columns))
-                sheet_df.columns = excel_columns
+                    # Generate Excel-style column names (A, B, C, etc.)
+                    excel_columns = generate_excel_column_names(len(sheet_df.columns))
+                    sheet_df.columns = excel_columns
 
-                # Set index to start from 1 (like Excel row numbers)
-                sheet_df.index = range(1, len(sheet_df) + 1)
+                    # Set index to start from 1 (like Excel row numbers)
+                    sheet_df.index = range(1, len(sheet_df) + 1)
 
-                sheets[sheet_name] = sheet_df
-                tables.append((sheet_name, sheet_df))
+                    sheets[sheet_name] = sheet_df
+                    tables.append((sheet_name, sheet_df))
 
-            # Debugging: Print the sheet names and number of sheets processed
-            return tables, None, [], sheets
+                print(f"Processed sheets: {list(sheets.keys())}")
+                return tables, None, [], sheets
+            except Exception as e:
+                raise RuntimeError(f"Error reading Excel file: {e}")
+
         else:
-            return None, None, [], {}
+            raise ValueError("Unsupported file format. Please upload a CSV or Excel file.")
 
     except Exception as e:
         raise RuntimeError(f"Failed to read file '{file_name}': {e}")
