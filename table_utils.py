@@ -177,7 +177,6 @@ def read_csv_or_excel_file(file_bytes, file_name):
                     sheets[sheet_name] = sheet_df
                     tables.append((sheet_name, sheet_df))
 
-                print(f"Processed sheets: {list(sheets.keys())}")
                 return tables, None, [], sheets
             except Exception as e:
                 raise RuntimeError(f"Error reading Excel file: {e}")
