@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-from table_utils import BlobManager, TableExtractor, read_csv_or_excel_file
+from table_utils import BlobManager, TableExtractor, read_csv_or_excel_file, standardize_dataframe
 
 def initialize_app():
     st.set_page_config(page_title="Budget Table Extractor", layout="wide")
@@ -66,6 +66,16 @@ def add_download_buttons(df: pd.DataFrame, label_prefix: str, index: int = None)
         mime="application/json"
     )
 
+def download_table_as_json(df, table_index):
+    """Download a DataFrame as a JSON file."""
+    json_data = df.to_json(orient="records", indent=2).encode("utf-8")
+    st.download_button(
+        label=f"⬇️ Download Table {table_index} as JSON",
+        data=json_data,
+        file_name=f"table_{table_index}.json",
+        mime="application/json"
+    )
+
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
     if "processed_file" not in st.session_state or st.session_state["processed_file"] != selected_blob_file:
         st.session_state["processed_file"] = selected_blob_file
@@ -90,7 +100,7 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
 
             elif ext in [".xlsx", ".xls"]:
                 _, _, _, sheets = read_csv_or_excel_file(blob_bytes, selected_blob_file)
-                st.session_state["excel_sheets"] = sheets
+                st.session_state["excel_sheets"] = {sheet_name: standardize_dataframe(sheet_df) for sheet_name, sheet_df in sheets.items()}
                 st.session_state["filtered_tables"] = {}
 
                 if not sheets:
@@ -110,14 +120,15 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
     if ext == ".pdf" and st.session_state.get("filtered_tables"):
         all_cleaned_tables = []
         for i, df in enumerate(st.session_state["filtered_tables"], start=1):
-            df = extractor.clean_table(df).fillna("")
+            df = standardize_dataframe(extractor.clean_table(df).fillna(""))
             df.columns = deduplicate_columns(df.columns)
             all_cleaned_tables.append(df)
 
             st.subheader(f"📊 Table {i}")
             st.dataframe(df)
 
-            add_download_buttons(df, label_prefix="Table", index=i)
+            #add_download_buttons(df, label_prefix="Table", index=i)
+            download_table_as_json(df, i)
 
         combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
         add_download_buttons(combined_df, label_prefix="All_Tables")
@@ -127,6 +138,7 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
         sheets = st.session_state["excel_sheets"]
         all_cleaned_tables = []
         for i, (sheet_name, sheet_df) in enumerate(sheets.items(), start=1):
+            sheet_df = standardize_dataframe(sheet_df)
             if sheet_df.empty:
                 st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
                 continue
@@ -137,9 +149,33 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
             st.subheader(f"📊 Sheet: {sheet_name}")
             st.dataframe(sheet_df, use_container_width=True)
 
-            add_download_buttons(sheet_df, label_prefix=f"Sheet_{sheet_name}")
+            #add_download_buttons(sheet_df, label_prefix=f"Sheet_{sheet_name}")
+            download_table_as_json(sheet_df, i)
+
 
         combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
         add_download_buttons(combined_df, label_prefix="All_Sheets")
 
     return ext
+
+def process_excel_sheets(blob_bytes, selected_blob_file):
+    """Process Excel sheets and display them in the UI."""
+    _, _, _, sheets = read_csv_or_excel_file(blob_bytes, selected_blob_file)
+    st.session_state["excel_sheets"] = sheets
+
+    if sheets:
+        for sheet_name, sheet_df in sheets.items():
+            if not sheet_df.empty:
+                st.subheader(f"📊 Sheet: {sheet_name}")
+                st.dataframe(sheet_df, use_container_width=True)
+
+                # Replace CSV download with JSON download for each table
+                json_data = sheet_df.to_json(orient="records", indent=2).encode("utf-8")
+                st.download_button(
+                    label=f"Download {sheet_name} as JSON",
+                    data=json_data,
+                    file_name=f"{selected_blob_file}_{sheet_name}.json",
+                    mime="application/json"
+                )
+            else:
+                st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")

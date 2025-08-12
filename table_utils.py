@@ -181,3 +181,14 @@ def generate_excel_column_names(num_columns):
                 break
         columns.append(col_name)
     return columns
+
+def standardize_dataframe(df):
+    """Ensure all columns in the DataFrame have consistent data types."""
+    for column in df.columns:
+        if df[column].dtype == 'object':
+            # Convert mixed-type object columns to string
+            df[column] = df[column].astype(str)
+        elif pd.api.types.is_numeric_dtype(df[column]):
+            # Fill NaN values with 0 for numeric columns
+            df[column] = df[column].fillna(0)
+    return df
