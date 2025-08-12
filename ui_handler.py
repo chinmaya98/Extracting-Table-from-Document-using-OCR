@@ -3,8 +3,6 @@ import pandas as pd
 import os
 import re
 from table_utils import BlobManager, TableExtractor, read_csv_or_excel_file, standardize_dataframe
-from PIL import Image
-import io
 
 def initialize_app():
     st.set_page_config(page_title="Budget Table Extractor", layout="wide")
@@ -79,12 +77,6 @@ def download_table_as_json(df, table_index):
     )
 
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
-    blob_bytes = blob_manager.download_file(selected_blob_file) if blob_manager else None
-
-    if not blob_bytes:
-        st.error("No file selected or uploaded.")
-        return
-
     if "processed_file" not in st.session_state or st.session_state["processed_file"] != selected_blob_file:
         st.session_state["processed_file"] = selected_blob_file
         st.session_state["filtered_tables"] = []
@@ -95,14 +87,7 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
 
     if st.button("Extract table from Files") and not st.session_state["processed"]:
         try:
-            if ext in [".jpg", ".jpeg", ".png", ".tiff"]:
-                # Convert image to PDF for Azure Document Intelligence
-                image = Image.open(io.BytesIO(blob_bytes))
-                pdf_bytes = io.BytesIO()
-                image.save(pdf_bytes, format="PDF")
-                pdf_bytes.seek(0)
-                blob_bytes = pdf_bytes.read()
-                ext = ".pdf"
+            blob_bytes = blob_manager.download_file(selected_blob_file)
 
             if ext == ".pdf":
                 tables = extractor.extract_from_pdf(blob_bytes)
@@ -122,7 +107,7 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
                     st.warning("⚠️ No sheets found in the Excel file.")
 
             else:
-                st.info("Unsupported file format. Please select a PDF, Excel, or image file.")
+                st.info("Unsupported file format. Please select a PDF or Excel file.")
                 st.session_state["filtered_tables"] = []
                 st.session_state["excel_sheets"] = {}
 
