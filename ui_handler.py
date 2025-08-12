@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-from table_utils import BlobManager, TableExtractor, read_csv_or_excel_file, standardize_dataframe
+from table_utils import BlobManager, TableExtractor, read_csv_or_excel_file
 
 def initialize_app():
     st.set_page_config(page_title="Budget Table Extractor", layout="wide")
@@ -76,6 +76,33 @@ def download_table_as_json(df, table_index):
         mime="application/json"
     )
 
+def standardize_dataframe(df):
+    """Ensure all columns in the DataFrame have consistent data types and flatten MultiIndex columns."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
+
+    df.columns = [str(col) for col in df.columns]
+
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].astype(str)
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].fillna(0)
+    return df
+
+def preprocess_dataframe(df):
+    """Preprocess the DataFrame by cleaning column names and ensuring consistent data types."""
+    df.columns = deduplicate_columns(df.columns)
+    df = standardize_dataframe(df)
+    return df
+
+def contains_money(df):
+    """Check if the DataFrame contains any budget-related data, such as monetary values."""
+    for col in df.select_dtypes(include=['float64', 'int64', 'object']):
+        if df[col].apply(lambda x: isinstance(x, (int, float)) or (isinstance(x, str) and re.search(r'\$|€|£|¥', x))).any():
+            return True
+    return False
+
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
     if "processed_file" not in st.session_state or st.session_state["processed_file"] != selected_blob_file:
         st.session_state["processed_file"] = selected_blob_file
@@ -89,14 +116,32 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
         try:
             blob_bytes = blob_manager.download_file(selected_blob_file)
 
+            # Debugging and validation for extracted tables
             if ext == ".pdf":
                 tables = extractor.extract_from_pdf(blob_bytes)
-                filtered_tables = extractor.filter_tables(tables)
-                st.session_state["filtered_tables"] = filtered_tables
-                st.session_state["excel_sheets"] = {}
+                for i, table in enumerate(tables):
+                    print(f"Table {i+1} type: {type(table)}")
+                    if not isinstance(table, pd.DataFrame):
+                        continue
 
-                if not filtered_tables:
-                    st.warning("⚠️ No tables found in the selected PDF file.")
+                    if table.empty:
+                        continue
+
+                    try:
+                        # Preprocess the DataFrame
+                        table = preprocess_dataframe(table)
+
+                        # Filter tables to include only budget-related ones
+                        if not contains_money(table):
+                            continue
+
+                        table = standardize_dataframe(table)
+                        st.session_state["filtered_tables"].append(table)
+                    except Exception as e:
+                        st.error(f"Error processing table {i+1}: {e}")
+
+                if not st.session_state["filtered_tables"]:
+                    st.warning("⚠️ No valid budget-related tables found in the selected PDF file.")
 
             elif ext in [".xlsx", ".xls"]:
                 _, _, _, sheets = read_csv_or_excel_file(blob_bytes, selected_blob_file)
@@ -116,7 +161,6 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
         except Exception as e:
             st.error(f"❌ Error processing file: {e}")
 
-    # Show extracted tables for PDF
     if ext == ".pdf" and st.session_state.get("filtered_tables"):
         all_cleaned_tables = []
         for i, df in enumerate(st.session_state["filtered_tables"], start=1):
@@ -127,13 +171,11 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
             st.subheader(f"📊 Table {i}")
             st.dataframe(df)
 
-            #add_download_buttons(df, label_prefix="Table", index=i)
             download_table_as_json(df, i)
 
         combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
         add_download_buttons(combined_df, label_prefix="All_Tables")
 
-    # Show sheets for Excel
     if ext in [".xlsx", ".xls"] and st.session_state.get("excel_sheets"):
         sheets = st.session_state["excel_sheets"]
         all_cleaned_tables = []
@@ -149,33 +191,9 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
             st.subheader(f"📊 Sheet: {sheet_name}")
             st.dataframe(sheet_df, use_container_width=True)
 
-            #add_download_buttons(sheet_df, label_prefix=f"Sheet_{sheet_name}")
             download_table_as_json(sheet_df, i)
-
 
         combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
         add_download_buttons(combined_df, label_prefix="All_Sheets")
 
     return ext
-
-def process_excel_sheets(blob_bytes, selected_blob_file):
-    """Process Excel sheets and display them in the UI."""
-    _, _, _, sheets = read_csv_or_excel_file(blob_bytes, selected_blob_file)
-    st.session_state["excel_sheets"] = sheets
-
-    if sheets:
-        for sheet_name, sheet_df in sheets.items():
-            if not sheet_df.empty:
-                st.subheader(f"📊 Sheet: {sheet_name}")
-                st.dataframe(sheet_df, use_container_width=True)
-
-                # Replace CSV download with JSON download for each table
-                json_data = sheet_df.to_json(orient="records", indent=2).encode("utf-8")
-                st.download_button(
-                    label=f"Download {sheet_name} as JSON",
-                    data=json_data,
-                    file_name=f"{selected_blob_file}_{sheet_name}.json",
-                    mime="application/json"
-                )
-            else:
-                st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")

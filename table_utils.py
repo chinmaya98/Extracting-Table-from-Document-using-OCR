@@ -203,11 +203,34 @@ def generate_excel_column_names(num_columns):
 
 def standardize_dataframe(df):
     """Ensure all columns in the DataFrame have consistent data types."""
-    for column in df.columns:
-        if df[column].dtype == 'object':
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError(f"Input is not a valid DataFrame. Received type: {type(df)}")
+
+    for col in df.columns:
+        if col not in df.columns:
+            raise ValueError(f"Column '{col}' does not exist in the DataFrame.")
+
+        # Use df.dtypes[col] to access the column's data type
+        if df.dtypes[col] == 'object':
             # Convert mixed-type object columns to string
-            df[column] = df[column].astype(str)
-        elif pd.api.types.is_numeric_dtype(df[column]):
+            df[col] = df[col].astype(str)
+        elif pd.api.types.is_numeric_dtype(df[col]):
             # Fill NaN values with 0 for numeric columns
-            df[column] = df[column].fillna(0)
+            df[col] = df[col].fillna(0)
+    return df
+
+def preprocess_dataframe(df):
+    """Preprocess the DataFrame to clean up column names."""
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError(f"Input is not a valid DataFrame. Received type: {type(df)}")
+
+    # Replace empty or invalid column names
+    df.columns = [
+        f"Unnamed_{i}" if col == "" or col is None else str(col).strip()
+        for i, col in enumerate(df.columns)
+    ]
+
+    # Ensure all column names are unique
+    df.columns = pd.io.parsers.ParserBase({'names': df.columns})._maybe_dedup_names(df.columns)
+
     return df
