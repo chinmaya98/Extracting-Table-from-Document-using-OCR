@@ -139,6 +139,7 @@ def read_csv_or_excel_file(file_bytes, file_name):
         if file_extension == 'csv':
             # Read CSV file
             df = pd.read_csv(io.BytesIO(file_bytes))
+            df = df.fillna("")  # Replace NaN with empty strings
             return [("CSV", df)], None, [], {}
         elif file_extension in ['xlsx', 'xls']:
             # Read Excel file - handle multiple sheets
@@ -148,6 +149,7 @@ def read_csv_or_excel_file(file_bytes, file_name):
             for sheet_name in excel_file.sheet_names:
                 # Read without header to get raw data
                 sheet_df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
+                sheet_df = sheet_df.fillna("")  # Replace NaN with empty strings
 
                 # Generate Excel-style column names (A, B, C, etc.)
                 excel_columns = generate_excel_column_names(len(sheet_df.columns))
@@ -160,7 +162,6 @@ def read_csv_or_excel_file(file_bytes, file_name):
                 tables.append((sheet_name, sheet_df))
 
             # Debugging: Print the sheet names and number of sheets processed
-            print(f"Processed sheets: {list(sheets.keys())}")
             return tables, None, [], sheets
         else:
             return None, None, [], {}
