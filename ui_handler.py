@@ -120,7 +120,6 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
             if ext == ".pdf":
                 tables = extractor.extract_from_pdf(blob_bytes)
                 for i, table in enumerate(tables):
-                    print(f"Table {i+1} type: {type(table)}")
                     if not isinstance(table, pd.DataFrame):
                         continue
 
