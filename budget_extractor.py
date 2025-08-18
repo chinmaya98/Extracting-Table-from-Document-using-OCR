@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 class BudgetExtractor:
     """
     Comprehensive budget and label extraction from PDFs, images, and Excel files.
-    Extracts maximum 3 columns: Label1, Label2, Budget/Amount
+    Extracts maximum 3 columns: Primary Label, Secondary Label, Budget/Amount
     """
     
     def __init__(self):
@@ -33,6 +33,20 @@ class BudgetExtractor:
             'budget', 'amount', 'cost', 'price', 'total', 'value', 'expense', 
             'revenue', 'income', 'salary', 'wage', 'fee', 'payment', 'sum',
             'balance', 'fund', 'allocation', 'expenditure', 'spend', 'investment'
+        ]
+        
+        # Keywords for identifying primary description columns (Label1)
+        self.primary_label_keywords = [
+            'service', 'description', 'item', 'product', 'name', 'title', 
+            'project', 'task', 'activity', 'work', 'job', 'category',
+            'type', 'kind', 'class', 'group', 'section', 'department'
+        ]
+        
+        # Keywords for identifying secondary detail columns (Label2)  
+        self.secondary_label_keywords = [
+            'quantity', 'qty', 'count', 'number', 'units', 'pieces', 'items',
+            'details', 'specification', 'spec', 'notes', 'remarks', 'comment',
+            'status', 'phase', 'stage', 'priority', 'urgency', 'frequency'
         ]
         
         # Enhanced money pattern with more coverage
@@ -260,24 +274,31 @@ class BudgetExtractor:
                         after_amount = line[match.end():].strip()
                         
                         # Create labels from context
-                        label1 = self._extract_meaningful_label(before_amount)
-                        label2 = self._extract_meaningful_label(after_amount)
+                        primary_label = self._extract_meaningful_label(before_amount)
+                        secondary_label = self._extract_meaningful_label(after_amount)
                         
-                        if label1 or label2:  # Only add if we have some context
+                        if primary_label or secondary_label:  # Only add if we have some context
                             currency_symbol = self._extract_currency_symbol(amount_str)
                             
+                            # Determine appropriate headers based on content
+                            primary_header = self._determine_text_header(before_amount, 'Description')
+                            secondary_header = self._determine_text_header(after_amount, 'Details') if secondary_label else ''
+                            
                             entry = {
-                                'Label1': label1,
+                                primary_header: primary_label if primary_label else secondary_label,
                                 'Budget_Amount': amount_value,
                                 'Currency_Symbol': currency_symbol,
                                 'Original_Text': amount_str,
                                 'Source': source_name,
-                                'Line_Number': line_idx + 1
+                                'Line_Number': line_idx + 1,
+                                'Primary_Header': primary_header,
+                                'Budget_Header': 'Amount'
                             }
                             
-                            # Only add Label2 if we have meaningful content
-                            if label2:
-                                entry['Label2'] = label2
+                            # Only add secondary column if we have meaningful content
+                            if secondary_label and primary_label and secondary_header:
+                                entry[secondary_header] = secondary_label
+                                entry['Secondary_Header'] = secondary_header
                             
                             extracted_data.append(entry)
             
@@ -288,7 +309,7 @@ class BudgetExtractor:
             return pd.DataFrame()
 
     def _extract_budget_from_dataframe(self, df: pd.DataFrame, source_name: str) -> pd.DataFrame:
-        """Extract budget information from a DataFrame and standardize to 2-3 columns with smart budget selection."""
+        """Extract budget information from a DataFrame using actual column headers."""
         try:
             if df.empty:
                 return pd.DataFrame()
@@ -301,6 +322,10 @@ class BudgetExtractor:
             
             if not budget_columns:
                 return pd.DataFrame()
+            
+            # Identify primary and secondary label columns using actual headers
+            primary_columns = self._find_primary_label_columns(df, budget_columns)
+            secondary_columns = self._find_secondary_label_columns(df, budget_columns)
             
             extracted_data = []
             
@@ -331,31 +356,28 @@ class BudgetExtractor:
                 
                 # If we found a valid budget amount, create the entry
                 if best_budget_info and best_budget_info['amount'] > 0:
-                    # Get other columns as labels (exclude the budget column)
-                    other_columns = [col for col in df.columns if col != best_budget_info['column']]
+                    # Build primary label using actual column headers and data
+                    primary_label, primary_header = self._build_primary_label(row, primary_columns)
                     
-                    # Create labels from other columns
-                    labels = []
-                    for col in other_columns:
-                        label_value = str(row[col]).strip()
-                        if label_value and label_value.lower() not in ['', 'nan', 'none']:
-                            labels.append(label_value)
-                        if len(labels) >= 2:  # Limit to 2 labels max
-                            break
+                    # Build secondary label using actual column headers and data
+                    secondary_label, secondary_header = self._build_secondary_label(row, secondary_columns)
                     
-                    # Create the entry - only include Label2 if we have meaningful content
+                    # Create the entry with actual column headers
                     entry = {
-                        'Label1': labels[0] if len(labels) > 0 else best_budget_info['column'],
+                        primary_header: primary_label,
                         'Budget_Amount': best_budget_info['amount'],
                         'Currency_Symbol': best_budget_info['currency_symbol'],
                         'Original_Text': best_budget_info['original_text'],
                         'Source': source_name,
-                        'Budget_Column': best_budget_info['column']
+                        'Budget_Column': best_budget_info['column'],
+                        'Primary_Header': primary_header,
+                        'Budget_Header': best_budget_info['column']
                     }
                     
-                    # Only add Label2 if we have a meaningful second label
-                    if len(labels) > 1 and labels[1]:
-                        entry['Label2'] = labels[1]
+                    # Only add secondary column if we have meaningful content
+                    if secondary_label and secondary_header:
+                        entry[secondary_header] = secondary_label
+                        entry['Secondary_Header'] = secondary_header
                     
                     extracted_data.append(entry)
             
@@ -364,6 +386,87 @@ class BudgetExtractor:
         except Exception as e:
             print(f"Error extracting budget from DataFrame: {e}")
             return pd.DataFrame()
+
+    def _find_primary_label_columns(self, df: pd.DataFrame, exclude_columns: List[str]) -> List[str]:
+        """Find columns that contain primary descriptions (service, description, etc.)."""
+        primary_columns = []
+        available_columns = [col for col in df.columns if col not in exclude_columns]
+        
+        # First, look for columns with primary keywords in their names
+        for col in available_columns:
+            col_lower = str(col).lower()
+            if any(keyword in col_lower for keyword in self.primary_label_keywords):
+                primary_columns.append(col)
+        
+        # If no primary columns found, take the first few non-budget columns
+        if not primary_columns and available_columns:
+            primary_columns = available_columns[:2]  # Take first 2 columns as primary
+        
+        return primary_columns
+
+    def _find_secondary_label_columns(self, df: pd.DataFrame, exclude_columns: List[str]) -> List[str]:
+        """Find columns that contain secondary details (quantity, items, etc.)."""
+        secondary_columns = []
+        available_columns = [col for col in df.columns if col not in exclude_columns]
+        
+        # Look for columns with secondary keywords in their names
+        for col in available_columns:
+            col_lower = str(col).lower()
+            if any(keyword in col_lower for keyword in self.secondary_label_keywords):
+                secondary_columns.append(col)
+        
+        # If no specific secondary columns found, look for columns not used as primary
+        primary_columns = self._find_primary_label_columns(df, exclude_columns)
+        remaining_columns = [col for col in available_columns if col not in primary_columns]
+        
+        if not secondary_columns and remaining_columns:
+            secondary_columns = remaining_columns[:1]  # Take first remaining column
+        
+        return secondary_columns
+
+    def _build_primary_label(self, row: pd.Series, primary_columns: List[str]) -> Tuple[str, str]:
+        """Build primary label from service and description columns with ':' separator."""
+        if not primary_columns:
+            return '', 'Description'
+        
+        # Collect values from primary columns
+        values = []
+        headers = []
+        
+        for col in primary_columns[:2]:  # Limit to first 2 primary columns
+            value = str(row[col]).strip()
+            if value and value.lower() not in ['', 'nan', 'none']:
+                values.append(value)
+                headers.append(col)
+        
+        if not values:
+            return '', primary_columns[0] if primary_columns else 'Description'
+        
+        # Determine the header name - combine if multiple columns used
+        if len(headers) == 1:
+            header_name = headers[0]
+        elif len(headers) == 2:
+            header_name = f"{headers[0]} : {headers[1]}"
+        else:
+            header_name = "Description"
+        
+        # Combine values with ':' if multiple exist
+        combined_value = " : ".join(values)
+        
+        return combined_value, header_name
+
+    def _build_secondary_label(self, row: pd.Series, secondary_columns: List[str]) -> Tuple[str, str]:
+        """Build secondary label from quantity, items, etc."""
+        if not secondary_columns:
+            return '', ''
+        
+        # Take the first meaningful secondary column
+        for col in secondary_columns[:1]:  # Limit to first secondary column
+            value = str(row[col]).strip()
+            if value and value.lower() not in ['', 'nan', 'none']:
+                return value, col
+        
+        return '', ''
 
     def _find_budget_columns(self, df: pd.DataFrame) -> List[str]:
         """Find columns that likely contain budget/amount information."""
@@ -459,6 +562,27 @@ class BudgetExtractor:
         except (ValueError, TypeError):
             return 0.0
 
+    def _determine_text_header(self, text: str, default: str) -> str:
+        """Determine appropriate header name based on text content."""
+        if not text:
+            return default
+        
+        text_lower = text.lower()
+        
+        # Check for service/description keywords
+        if any(keyword in text_lower for keyword in ['service', 'description', 'item', 'product']):
+            return 'Service/Description'
+        
+        # Check for quantity/detail keywords  
+        if any(keyword in text_lower for keyword in ['qty', 'quantity', 'units', 'pieces', 'count']):
+            return 'Quantity'
+            
+        # Check for other common patterns
+        if any(keyword in text_lower for keyword in ['details', 'notes', 'remarks']):
+            return 'Details'
+            
+        return default
+
     def _extract_meaningful_label(self, text: str) -> str:
         """Extract meaningful label from text context."""
         if not text:
@@ -485,59 +609,165 @@ class BudgetExtractor:
         return str(header).strip().replace('\n', ' ').replace('\r', '')
 
     def _combine_and_process_data(self, data_list: List[pd.DataFrame]) -> pd.DataFrame:
-        """Combine multiple DataFrames and process to final format with dynamic columns."""
+        """Combine multiple DataFrames and process to final format with dynamic column headers."""
         if not data_list:
-            return pd.DataFrame(columns=['Label1', 'Budget_Amount'])
+            return pd.DataFrame(columns=['Description', 'Budget_Amount'])
         
         # Combine all DataFrames
         combined_df = pd.concat(data_list, ignore_index=True)
         
         if combined_df.empty:
-            return pd.DataFrame(columns=['Label1', 'Budget_Amount'])
+            return pd.DataFrame(columns=['Description', 'Budget_Amount'])
         
         # Ensure required columns exist
-        if 'Label1' not in combined_df.columns:
-            combined_df['Label1'] = ''
         if 'Budget_Amount' not in combined_df.columns:
             combined_df['Budget_Amount'] = 0.0
         if 'Currency_Symbol' not in combined_df.columns:
             combined_df['Currency_Symbol'] = '$'
         
         # Clean and standardize
-        combined_df['Label1'] = combined_df['Label1'].astype(str).str.strip()
         combined_df['Budget_Amount'] = pd.to_numeric(combined_df['Budget_Amount'], errors='coerce').fillna(0)
         combined_df['Currency_Symbol'] = combined_df['Currency_Symbol'].astype(str).str.strip()
         
-        # Handle Label2 if it exists and has meaningful content
-        if 'Label2' in combined_df.columns:
-            combined_df['Label2'] = combined_df['Label2'].astype(str).str.strip()
-            # Remove empty Label2 values
-            combined_df.loc[combined_df['Label2'].isin(['', 'nan', 'None']), 'Label2'] = None
+        # Determine the primary column name from the data
+        primary_header = self._determine_primary_column_name(combined_df)
+        secondary_header = self._determine_secondary_column_name(combined_df)
+        
+        # Create final DataFrame with dynamic column structure
+        final_columns = [primary_header]
+        
+        # Add secondary column only if it contains meaningful data
+        if secondary_header and self._has_meaningful_secondary_data(combined_df, secondary_header):
+            final_columns.append(secondary_header)
+        
+        # Always add Budget_Amount and Currency_Symbol as the last columns
+        final_columns.extend(['Budget_Amount', 'Currency_Symbol'])
+        
+        # Create result DataFrame with renamed columns
+        result_df = pd.DataFrame()
+        
+        # Map primary column
+        result_df[primary_header] = self._get_primary_column_data(combined_df)
+        
+        # Map secondary column if needed
+        if secondary_header and secondary_header in final_columns[1:-2]:
+            result_df[secondary_header] = self._get_secondary_column_data(combined_df)
+        
+        # Add budget columns
+        result_df['Budget_Amount'] = combined_df['Budget_Amount']
+        result_df['Currency_Symbol'] = combined_df['Currency_Symbol']
         
         # Remove rows with no meaningful data
         valid_rows = (
-            (combined_df['Label1'] != '') | 
-            (combined_df['Budget_Amount'] > 0)
+            (result_df[primary_header].astype(str).str.strip() != '') | 
+            (result_df['Budget_Amount'] > 0)
         )
         
-        result_df = combined_df[valid_rows].copy()
+        result_df = result_df[valid_rows].copy()
         
         # Sort by budget amount (highest first)
         if not result_df.empty:
             result_df = result_df.sort_values('Budget_Amount', ascending=False).reset_index(drop=True)
         
-        # Determine final column structure - Budget_Amount should always be last
-        final_columns = ['Label1']
+        return result_df
+
+    def _determine_primary_column_name(self, df: pd.DataFrame) -> str:
+        """Determine the best name for the primary column based on actual data."""
+        if 'Primary_Header' in df.columns:
+            # Get the most common primary header
+            headers = df['Primary_Header'].dropna().value_counts()
+            if not headers.empty:
+                return headers.index[0]
         
-        # Add Label2 only if it contains meaningful data
-        if 'Label2' in result_df.columns and result_df['Label2'].notna().any():
-            final_columns.append('Label2')
+        # Look for common column names in the data
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if any(keyword in col_lower for keyword in ['service', 'description']):
+                return col
+            if col_lower in ['item', 'product', 'name', 'title']:
+                return col
         
-        # Always add Budget_Amount and Currency_Symbol as the last columns
-        final_columns.extend(['Budget_Amount', 'Currency_Symbol'])
+        return 'Description'
+
+    def _determine_secondary_column_name(self, df: pd.DataFrame) -> str:
+        """Determine the best name for the secondary column based on actual data."""
+        if 'Secondary_Header' in df.columns:
+            # Get the most common secondary header
+            headers = df['Secondary_Header'].dropna().value_counts()
+            if not headers.empty:
+                return headers.index[0]
         
-        # Return with dynamic column structure
-        return result_df[final_columns].copy()
+        # Look for common secondary column names in the data
+        for col in df.columns:
+            col_lower = str(col).lower()
+            if any(keyword in col_lower for keyword in ['quantity', 'qty', 'count']):
+                return col
+            if col_lower in ['details', 'notes', 'items']:
+                return col
+        
+        return ''
+
+    def _has_meaningful_secondary_data(self, df: pd.DataFrame, secondary_header: str) -> bool:
+        """Check if secondary column has meaningful data."""
+        if secondary_header not in df.columns and 'Secondary_Header' not in df.columns:
+            return False
+        
+        # Check if we have actual secondary data
+        secondary_data = self._get_secondary_column_data(df)
+        meaningful_count = sum(1 for val in secondary_data if val and str(val).strip() and str(val).lower() not in ['nan', 'none'])
+        
+        return meaningful_count > 0
+
+    def _get_primary_column_data(self, df: pd.DataFrame) -> pd.Series:
+        """Extract primary column data from the DataFrame."""
+        # Look for the actual primary data column
+        for col in df.columns:
+            if col not in ['Budget_Amount', 'Currency_Symbol', 'Original_Text', 'Source', 
+                          'Budget_Column', 'Primary_Header', 'Secondary_Header', 'Budget_Header', 'Line_Number']:
+                col_lower = str(col).lower()
+                if any(keyword in col_lower for keyword in self.primary_label_keywords) or 'description' in col_lower:
+                    return df[col].astype(str).str.strip()
+        
+        # Fallback: get first non-system column
+        for col in df.columns:
+            if col not in ['Budget_Amount', 'Currency_Symbol', 'Original_Text', 'Source', 
+                          'Budget_Column', 'Primary_Header', 'Secondary_Header', 'Budget_Header', 'Line_Number']:
+                return df[col].astype(str).str.strip()
+        
+        return pd.Series([''] * len(df))
+
+    def _get_secondary_column_data(self, df: pd.DataFrame) -> pd.Series:
+        """Extract secondary column data from the DataFrame."""
+        # Look for the actual secondary data column
+        used_primary = None
+        for col in df.columns:
+            if col not in ['Budget_Amount', 'Currency_Symbol', 'Original_Text', 'Source', 
+                          'Budget_Column', 'Primary_Header', 'Secondary_Header', 'Budget_Header', 'Line_Number']:
+                col_lower = str(col).lower()
+                if any(keyword in col_lower for keyword in self.primary_label_keywords) or 'description' in col_lower:
+                    used_primary = col
+                    break
+        
+        # Find secondary column (different from primary)
+        for col in df.columns:
+            if (col != used_primary and 
+                col not in ['Budget_Amount', 'Currency_Symbol', 'Original_Text', 'Source', 
+                           'Budget_Column', 'Primary_Header', 'Secondary_Header', 'Budget_Header', 'Line_Number']):
+                col_lower = str(col).lower()
+                if any(keyword in col_lower for keyword in self.secondary_label_keywords):
+                    return df[col].astype(str).str.strip()
+        
+        # Fallback: get second non-system column
+        non_system_cols = [col for col in df.columns if col not in 
+                          ['Budget_Amount', 'Currency_Symbol', 'Original_Text', 'Source', 
+                           'Budget_Column', 'Primary_Header', 'Secondary_Header', 'Budget_Header', 'Line_Number']]
+        
+        if len(non_system_cols) > 1 and used_primary:
+            remaining_cols = [col for col in non_system_cols if col != used_primary]
+            if remaining_cols:
+                return df[remaining_cols[0]].astype(str).str.strip()
+        
+        return pd.Series([''] * len(df))
 
     def _find_highest_budget_row(self, df: pd.DataFrame) -> Optional[Dict]:
         """Find the row with the highest budget amount."""
@@ -547,16 +777,36 @@ class BudgetExtractor:
         max_idx = df['Budget_Amount'].idxmax()
         max_row = df.loc[max_idx]
         
+        # Get actual column names dynamically
+        primary_col = None
+        secondary_col = None
+        
+        # Find the primary and secondary columns by checking column headers
+        for col in df.columns:
+            if col not in ['Budget_Amount', 'Currency_Symbol', 'Original_Text', 'Source', 
+                          'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                          'Budget_Header', 'Line_Number']:
+                if primary_col is None:
+                    primary_col = col
+                elif secondary_col is None:
+                    secondary_col = col
+                    break
+        
         result = {
             'index': max_idx,
-            'label1': max_row['Label1'],
             'budget_amount': max_row['Budget_Amount'],
             'row_data': max_row.to_dict()
         }
         
-        # Only add label2 if it exists and has content
-        if 'Label2' in df.columns and pd.notna(max_row.get('Label2')) and max_row.get('Label2'):
-            result['label2'] = max_row['Label2']
+        # Add primary label (always present)
+        if primary_col and primary_col in max_row:
+            result['label1'] = max_row[primary_col]
+            result['primary_header'] = primary_col
+        
+        # Only add secondary label if it exists and has content
+        if secondary_col and secondary_col in max_row and pd.notna(max_row.get(secondary_col)) and max_row.get(secondary_col):
+            result['label2'] = max_row[secondary_col]
+            result['secondary_header'] = secondary_col
         
         return result
 
@@ -591,7 +841,7 @@ class BudgetExtractor:
             combined_data = pd.concat(all_data, ignore_index=True)
             combined_data = combined_data.sort_values('Budget_Amount', ascending=False).reset_index(drop=True)
         else:
-            combined_data = pd.DataFrame(columns=['Label1', 'Label2', 'Budget_Amount', 'Source_File'])
+            combined_data = pd.DataFrame(columns=['Budget_Amount', 'Source_File', 'Currency_Symbol'])
         
         return {
             'individual_results': results,
@@ -620,7 +870,8 @@ def extract_budget_from_all_files() -> Dict[str, Any]:
 def get_budget_summary(file_path: str = None) -> pd.DataFrame:
     """
     Get a clean summary of budget data with dynamic column structure.
-    Budget_Amount is always the last column, Label2 only if present.
+    Budget_Amount is always the last column, secondary label only if present.
+    Columns are named with actual headers from the source files.
     If file_path is None, processes all files.
     """
     extractor = BudgetExtractor()
@@ -663,23 +914,36 @@ def display_budget_results(result, single_file=True):
                 st.subheader("📊 Extracted Budget Data")
                 st.write(f"**Total entries found:** {len(extracted_data)}")
                 
-                # Display with dynamic columns - Budget_Amount should be last
+                # Display with dynamic columns based on actual headers
                 display_columns = [col for col in extracted_data.columns 
-                                 if col in ['Label1', 'Label2', 'Budget_Amount', 'Currency_Symbol']]
+                                 if col not in ['Currency_Symbol', 'Original_Text', 'Source', 
+                                               'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                                               'Budget_Header', 'Line_Number']]
                 
                 # Create display DataFrame with formatted amounts
                 display_df = extracted_data[display_columns].copy()
                 
                 # Format the budget column with currency symbol
-                if 'Budget_Amount' in display_df.columns and 'Currency_Symbol' in display_df.columns:
-                    display_df['Formatted_Budget'] = display_df.apply(
+                if 'Budget_Amount' in display_df.columns and 'Currency_Symbol' in extracted_data.columns:
+                    display_df['Budget_Amount'] = extracted_data.apply(
                         lambda row: f"{row['Currency_Symbol']}{row['Budget_Amount']:,.2f}", axis=1
                     )
-                    # Replace Budget_Amount with formatted version
-                    display_df = display_df.drop(['Budget_Amount', 'Currency_Symbol'], axis=1)
-                    display_df = display_df.rename(columns={'Formatted_Budget': 'Budget_Amount'})
+                
+                # Reorder columns to put Budget_Amount last
+                budget_col = display_df.pop('Budget_Amount')
+                display_df['Budget_Amount'] = budget_col
                 
                 st.dataframe(display_df, use_container_width=True)
+                
+                # Show column information
+                if st.expander("📋 Column Information"):
+                    col_info = []
+                    for col in display_df.columns:
+                        if col != 'Budget_Amount':
+                            col_info.append(f"**{col}:** Data from original file columns")
+                        else:
+                            col_info.append(f"**{col}:** Highest amount selected from available budget columns")
+                    st.write("\n".join(col_info))
                 
                 # Highlight highest budget
                 highest_budget = result.get('highest_budget_row')
@@ -687,11 +951,19 @@ def display_budget_results(result, single_file=True):
                     st.subheader("🏆 Highest Budget Entry")
                     currency_symbol = extracted_data.loc[highest_budget['index'], 'Currency_Symbol'] if 'Currency_Symbol' in extracted_data.columns else '$'
                     
-                    info_text = f"**Label 1:** {highest_budget['label1']}\n\n"
+                    # Get the actual column names from the data
+                    display_columns = [col for col in extracted_data.columns 
+                                     if col not in ['Currency_Symbol', 'Original_Text', 'Source', 
+                                                   'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                                                   'Budget_Header', 'Line_Number', 'Budget_Amount']]
                     
-                    # Only show Label 2 if it exists and has content
-                    if 'Label2' in extracted_data.columns and extracted_data.loc[highest_budget['index'], 'Label2']:
-                        info_text += f"**Label 2:** {highest_budget['label2']}\n\n"
+                    info_text = ""
+                    row_data = extracted_data.loc[highest_budget['index']]
+                    
+                    # Display each meaningful column
+                    for col in display_columns:
+                        if pd.notna(row_data[col]) and str(row_data[col]).strip():
+                            info_text += f"**{col}:** {row_data[col]}\n\n"
                     
                     info_text += f"**Amount:** {currency_symbol}{highest_budget['budget_amount']:,.2f}"
                     
@@ -733,19 +1005,24 @@ def display_budget_results(result, single_file=True):
             st.write("**Top 10 Highest Budget Entries:**")
             top_entries = combined_data.head(10)
             
-            # Create display DataFrame with formatted amounts
+            # Create display DataFrame with formatted amounts - exclude system columns
             display_columns = [col for col in top_entries.columns 
-                             if col in ['Label1', 'Label2', 'Budget_Amount', 'Currency_Symbol', 'Source_File']]
+                             if col not in ['Currency_Symbol', 'Original_Text', 'Source', 
+                                           'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                                           'Budget_Header', 'Line_Number']]
+            
             display_df = top_entries[display_columns].copy()
             
             # Format the budget column with currency symbol
-            if 'Budget_Amount' in display_df.columns and 'Currency_Symbol' in display_df.columns:
-                display_df['Formatted_Budget'] = display_df.apply(
+            if 'Budget_Amount' in display_df.columns and 'Currency_Symbol' in top_entries.columns:
+                display_df['Budget_Amount'] = top_entries.apply(
                     lambda row: f"{row['Currency_Symbol']}{row['Budget_Amount']:,.2f}", axis=1
                 )
-                # Replace Budget_Amount with formatted version and remove Currency_Symbol
-                display_df = display_df.drop(['Budget_Amount', 'Currency_Symbol'], axis=1)
-                display_df = display_df.rename(columns={'Formatted_Budget': 'Budget_Amount'})
+            
+            # Ensure Budget_Amount is last column
+            if 'Budget_Amount' in display_df.columns:
+                budget_col = display_df.pop('Budget_Amount')
+                display_df['Budget_Amount'] = budget_col
             
             st.dataframe(display_df, use_container_width=True)
             
@@ -756,11 +1033,14 @@ def display_budget_results(result, single_file=True):
                 source_file = combined_data.loc[highest_overall['index'], 'Source_File']
                 currency_symbol = combined_data.loc[highest_overall['index'], 'Currency_Symbol'] if 'Currency_Symbol' in combined_data.columns else '$'
                 
-                info_text = f"**Label 1:** {highest_overall['label1']}\n\n"
+                # Get dynamic header names
+                primary_header = highest_overall.get('primary_header', 'Primary Label')
+                info_text = f"**{primary_header}:** {highest_overall['label1']}\n\n"
                 
-                # Only show Label 2 if it exists and has content
-                if 'Label2' in combined_data.columns and combined_data.loc[highest_overall['index'], 'Label2']:
-                    info_text += f"**Label 2:** {highest_overall['label2']}\n\n"
+                # Only show secondary label if it exists and has content
+                if 'label2' in highest_overall and highest_overall['label2']:
+                    secondary_header = highest_overall.get('secondary_header', 'Secondary Label')
+                    info_text += f"**{secondary_header}:** {highest_overall['label2']}\n\n"
                 
                 info_text += f"**Amount:** {currency_symbol}{highest_overall['budget_amount']:,.2f}\n\n"
                 info_text += f"**Source File:** {source_file}"
