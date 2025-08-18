@@ -51,7 +51,7 @@ class BlobManager:
         except Exception as e:
             raise RuntimeError(f"BlobManager initialization failed: {e}")
 
-    def list_files(self, extensions=(".pdf", ".xlsx", ".xls")):
+    def list_files(self, extensions=(".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".tiff", ".bmp")):
         """Lists files in the container with given extensions."""
         try:
             return [b.name for b in self.container_client.list_blobs() if b.name.lower().endswith(extensions)]

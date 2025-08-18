@@ -13,9 +13,28 @@ def handle_blob_interaction(blob_manager):
     selected_blob_file = None
     if blob_manager:
         try:
-            blob_files = blob_manager.list_files()
+            # Include image files in the list
+            blob_files = blob_manager.list_files(extensions=(".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".tiff", ".bmp"))
             if blob_files:
-                selected_blob_file = st.selectbox("Select a file from Blob Storage", blob_files)
+                # Group files by type for better organization
+                pdf_files = [f for f in blob_files if f.lower().endswith(('.pdf',))]
+                excel_files = [f for f in blob_files if f.lower().endswith(('.xlsx', '.xls'))]
+                image_files = [f for f in blob_files if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tiff', '.bmp'))]
+                
+                # Display file counts
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("PDF Files", len(pdf_files))
+                with col2:
+                    st.metric("Excel Files", len(excel_files))
+                with col3:
+                    st.metric("Image Files", len(image_files))
+                
+                selected_blob_file = st.selectbox(
+                    "Select a file from Blob Storage", 
+                    blob_files,
+                    help="Supports PDF, Excel (xlsx/xls), and Image files (jpg, png, tiff, bmp)"
+                )
         except Exception as e:
             st.error(f"Error accessing Blob Storage: {e}")
     return selected_blob_file

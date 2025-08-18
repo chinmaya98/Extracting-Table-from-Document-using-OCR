@@ -1,0 +1,29 @@
+# Core dependencies
+streamlit>=1.28.0
+pandas>=1.5.0
+numpy>=1.24.0
+
+# Azure services
+azure-ai-documentintelligence>=1.0.0
+azure-storage-blob>=12.0.0
+azure-core>=1.28.0
+
+# Image processing
+Pillow>=10.0.0
+
+# Text processing and regex
+regex>=2023.0.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Data processing
+openpyxl>=3.1.0  # For Excel file processing
+xlsxwriter>=3.1.0  # For Excel file writing
+
+# Optional: For enhanced data analysis
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# For better data type handling
+pyarrow>=12.0.0
