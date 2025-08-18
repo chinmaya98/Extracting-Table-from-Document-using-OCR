@@ -144,6 +144,7 @@ class BudgetExtractor:
         try:
             excel_file = pd.ExcelFile(io.BytesIO(excel_bytes))
             all_budget_data = []
+            sheets_processed = []
             
             for sheet_name in excel_file.sheet_names:
                 try:
@@ -151,10 +152,18 @@ class BudgetExtractor:
                     if df.empty:
                         continue
                     
+                    # Handle empty/null/NaN values properly
+                    df = df.replace([pd.NA, None, 'nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a', '#N/A', '#NULL!'], '')
+                    df = df.fillna('')
+                    
+                    # Create unique source name for each sheet
+                    source_name = f"Excel_{sheet_name}"
+                    
                     # Clean and process the sheet
-                    processed_data = self._process_excel_sheet(df, f"Excel_{sheet_name}")
+                    processed_data = self._process_excel_sheet(df, source_name)
                     if not processed_data.empty:
                         all_budget_data.append(processed_data)
+                        sheets_processed.append(sheet_name)
                         
                 except Exception as sheet_error:
                     print(f"Error processing sheet {sheet_name}: {sheet_error}")
@@ -170,7 +179,7 @@ class BudgetExtractor:
                 'extracted_data': final_data,
                 'highest_budget_row': self._find_highest_budget_row(final_data),
                 'total_rows': len(final_data),
-                'sheets_processed': len(excel_file.sheet_names),
+                'sheets_processed': sheets_processed,
                 'budget_columns_found': self._get_budget_columns(final_data)
             }
             
@@ -217,7 +226,11 @@ class BudgetExtractor:
             
             # Fill the cells
             for cell in table.cells:
-                cells[cell.row_index][cell.column_index] = str(cell.content).strip()
+                content = str(cell.content).strip()
+                # Handle empty/null/NaN values - keep them as empty strings
+                if content.lower() in ['nan', 'null', 'none', 'n/a', '#n/a', '#null!']:
+                    content = ""
+                cells[cell.row_index][cell.column_index] = content
             
             # Create DataFrame
             if nrows > 1:
@@ -225,6 +238,10 @@ class BudgetExtractor:
                 df = pd.DataFrame(cells[1:], columns=headers)
             else:
                 df = pd.DataFrame(cells)
+            
+            # Handle empty/null/NaN values in the DataFrame
+            df = df.replace([pd.NA, None, 'nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a', '#N/A', '#NULL!'], '')
+            df = df.fillna('')
             
             # Process the DataFrame to extract budget information
             return self._extract_budget_from_dataframe(df, source_name)
@@ -240,7 +257,8 @@ class BudgetExtractor:
             df = df.dropna(how='all').reset_index(drop=True)  # Remove completely empty rows
             df = df.loc[:, ~df.columns.duplicated()]  # Remove duplicate columns
             
-            # Fill NaN values
+            # Handle empty/null/NaN values - keep them as empty strings, don't fill with text
+            df = df.replace([pd.NA, None, 'nan', 'NaN', 'NULL', 'null', 'None'], '')
             df = df.fillna('')
             
             # Extract budget information
@@ -435,7 +453,8 @@ class BudgetExtractor:
         
         for col in primary_columns[:2]:  # Limit to first 2 primary columns
             value = str(row[col]).strip()
-            if value and value.lower() not in ['', 'nan', 'none']:
+            # Handle empty/null values properly - exclude them
+            if value and value.lower() not in ['', 'nan', 'none', 'null', 'n/a', '#n/a', '#null!']:
                 values.append(value)
                 headers.append(col)
         
@@ -463,7 +482,8 @@ class BudgetExtractor:
         # Take the first meaningful secondary column
         for col in secondary_columns[:1]:  # Limit to first secondary column
             value = str(row[col]).strip()
-            if value and value.lower() not in ['', 'nan', 'none']:
+            # Handle empty/null values properly - exclude them
+            if value and value.lower() not in ['', 'nan', 'none', 'null', 'n/a', '#n/a', '#null!']:
                 return value, col
         
         return '', ''
@@ -608,6 +628,68 @@ class BudgetExtractor:
             return 'Unknown'
         return str(header).strip().replace('\n', ' ').replace('\r', '')
 
+    def _ensure_max_three_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Ensure DataFrame has maximum 3 columns with proper structure."""
+        if df.empty:
+            return df
+        
+        # Get non-system columns
+        display_columns = [col for col in df.columns 
+                         if col not in ['Currency_Symbol', 'Original_Text', 'Source', 
+                                       'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                                       'Budget_Header', 'Line_Number']]
+        
+        # If we have more than 3 display columns, prioritize
+        if len(display_columns) > 3:
+            # Priority: Primary label, Secondary label, Budget Amount
+            budget_col = None
+            primary_col = None
+            secondary_col = None
+            
+            # Find budget column
+            if 'Budget_Amount' in display_columns:
+                budget_col = 'Budget_Amount'
+                remaining_cols = [col for col in display_columns if col != 'Budget_Amount']
+            else:
+                remaining_cols = display_columns
+            
+            # Find primary and secondary columns
+            if len(remaining_cols) >= 1:
+                primary_col = remaining_cols[0]
+            if len(remaining_cols) >= 2:
+                secondary_col = remaining_cols[1]
+            
+            # Build final column list (max 3)
+            final_columns = []
+            if primary_col:
+                final_columns.append(primary_col)
+            if secondary_col:
+                final_columns.append(secondary_col)
+            if budget_col:
+                final_columns.append(budget_col)
+            
+            # Keep only the selected columns
+            df = df[final_columns + [col for col in df.columns if col not in display_columns]].copy()
+        
+        return df
+
+    def _clean_display_values(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean values for display - ensure empty cells show as empty."""
+        if df.empty:
+            return df
+        
+        df_cleaned = df.copy()
+        
+        # Clean all non-budget columns
+        for col in df_cleaned.columns:
+            if col not in ['Budget_Amount', 'Currency_Symbol', 'Original_Text', 'Source', 
+                          'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                          'Budget_Header', 'Line_Number']:
+                df_cleaned[col] = df_cleaned[col].astype(str).str.strip()
+                df_cleaned[col] = df_cleaned[col].replace(['nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a', '#N/A', '#NULL!'], '')
+        
+        return df_cleaned
+
     def _combine_and_process_data(self, data_list: List[pd.DataFrame]) -> pd.DataFrame:
         """Combine multiple DataFrames and process to final format with dynamic column headers."""
         if not data_list:
@@ -619,6 +701,9 @@ class BudgetExtractor:
         if combined_df.empty:
             return pd.DataFrame(columns=['Description', 'Budget_Amount'])
         
+        # Clean display values first
+        combined_df = self._clean_display_values(combined_df)
+        
         # Ensure required columns exist
         if 'Budget_Amount' not in combined_df.columns:
             combined_df['Budget_Amount'] = 0.0
@@ -629,11 +714,14 @@ class BudgetExtractor:
         combined_df['Budget_Amount'] = pd.to_numeric(combined_df['Budget_Amount'], errors='coerce').fillna(0)
         combined_df['Currency_Symbol'] = combined_df['Currency_Symbol'].astype(str).str.strip()
         
+        # Ensure max 3 columns structure
+        combined_df = self._ensure_max_three_columns(combined_df)
+        
         # Determine the primary column name from the data
         primary_header = self._determine_primary_column_name(combined_df)
         secondary_header = self._determine_secondary_column_name(combined_df)
         
-        # Create final DataFrame with dynamic column structure
+        # Create final DataFrame with dynamic column structure (max 3 columns)
         final_columns = [primary_header]
         
         # Add secondary column only if it contains meaningful data
@@ -911,34 +999,138 @@ def display_budget_results(result, single_file=True):
             
             extracted_data = result.get('extracted_data')
             if not extracted_data.empty:
-                st.subheader("📊 Extracted Budget Data")
-                st.write(f"**Total entries found:** {len(extracted_data)}")
+                # Check if we have multiple tables/sheets to display
+                sources = extracted_data['Source'].unique() if 'Source' in extracted_data.columns else ['Default']
                 
-                # Display with dynamic columns based on actual headers
-                display_columns = [col for col in extracted_data.columns 
-                                 if col not in ['Currency_Symbol', 'Original_Text', 'Source', 
-                                               'Budget_Column', 'Primary_Header', 'Secondary_Header', 
-                                               'Budget_Header', 'Line_Number']]
-                
-                # Create display DataFrame with formatted amounts
-                display_df = extracted_data[display_columns].copy()
-                
-                # Format the budget column with currency symbol
-                if 'Budget_Amount' in display_df.columns and 'Currency_Symbol' in extracted_data.columns:
-                    display_df['Budget_Amount'] = extracted_data.apply(
-                        lambda row: f"{row['Currency_Symbol']}{row['Budget_Amount']:,.2f}", axis=1
-                    )
-                
-                # Reorder columns to put Budget_Amount last
-                budget_col = display_df.pop('Budget_Amount')
-                display_df['Budget_Amount'] = budget_col
-                
-                st.dataframe(display_df, use_container_width=True)
+                # Handle multiple tables from PDF/Image or multiple Excel sheets
+                if len(sources) > 1:
+                    st.subheader("📊 Extracted Budget Data")
+                    st.write(f"**Found {len(sources)} tables/sheets with budget data**")
+                    
+                    # Display tables in 3-column layout
+                    tables_per_row = 3
+                    table_groups = []
+                    current_group = []
+                    
+                    for i, source in enumerate(sources):
+                        source_data = extracted_data[extracted_data['Source'] == source]
+                        current_group.append((source, source_data))
+                        
+                        if len(current_group) == tables_per_row or i == len(sources) - 1:
+                            table_groups.append(current_group)
+                            current_group = []
+                    
+                    # Display each group of tables in columns
+                    for group_idx, table_group in enumerate(table_groups):
+                        cols = st.columns(len(table_group))
+                        
+                        for col_idx, (source, source_data) in enumerate(table_group):
+                            with cols[col_idx]:
+                                # Clean source name for display
+                                if source.startswith('PDF_Table_'):
+                                    display_name = f"Table {source.split('_')[-1]}"
+                                elif source.startswith('Excel_'):
+                                    sheet_name = source.replace('Excel_', '')
+                                    display_name = f"Sheet: {sheet_name}"
+                                else:
+                                    display_name = source
+                                
+                                st.markdown(f"**{display_name}**")
+                                
+                                # Prepare display data with proper empty value handling
+                                display_columns = [col for col in source_data.columns 
+                                                 if col not in ['Currency_Symbol', 'Original_Text', 'Source', 
+                                                               'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                                                               'Budget_Header', 'Line_Number']]
+                                
+                                display_df = source_data[display_columns].copy()
+                                
+                                # Clean empty values - ensure they show as empty cells
+                                for col in display_df.columns:
+                                    if col != 'Budget_Amount':
+                                        display_df[col] = display_df[col].astype(str).str.strip()
+                                        display_df[col] = display_df[col].replace(['nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a'], '')
+                                
+                                # Format the budget column with currency symbol
+                                if 'Budget_Amount' in display_df.columns and 'Currency_Symbol' in source_data.columns:
+                                    display_df['Budget_Amount'] = source_data.apply(
+                                        lambda row: f"{row['Currency_Symbol']}{row['Budget_Amount']:,.2f}" if row['Budget_Amount'] > 0 else '', axis=1
+                                    )
+                                
+                                # Ensure we have max 3 columns and Budget_Amount is last
+                                if len(display_df.columns) > 3:
+                                    non_budget_cols = [col for col in display_df.columns if col != 'Budget_Amount'][:2]
+                                    if 'Budget_Amount' in display_df.columns:
+                                        final_cols = non_budget_cols + ['Budget_Amount']
+                                    else:
+                                        final_cols = non_budget_cols[:3]
+                                    display_df = display_df[final_cols]
+                                elif 'Budget_Amount' in display_df.columns:
+                                    budget_col = display_df.pop('Budget_Amount')
+                                    display_df['Budget_Amount'] = budget_col
+                                
+                                st.dataframe(display_df, use_container_width=True, height=200)
+                                
+                                # Download button for individual table
+                                csv_data = source_data.to_csv(index=False)
+                                st.download_button(
+                                    label=f"� CSV",
+                                    data=csv_data,
+                                    file_name=f"budget_data_{display_name.replace(' ', '_').replace(':', '')}.csv",
+                                    mime="text/csv",
+                                    key=f"download_{source}"
+                                )
+                else:
+                    # Single table display
+                    st.subheader("�📊 Extracted Budget Data")
+                    st.write(f"**Total entries found:** {len(extracted_data)}")
+                    
+                    # Display with dynamic columns based on actual headers
+                    display_columns = [col for col in extracted_data.columns 
+                                     if col not in ['Currency_Symbol', 'Original_Text', 'Source', 
+                                                   'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                                                   'Budget_Header', 'Line_Number']]
+                    
+                    # Create display DataFrame with formatted amounts
+                    display_df = extracted_data[display_columns].copy()
+                    
+                    # Clean empty values - ensure they show as empty cells
+                    for col in display_df.columns:
+                        if col != 'Budget_Amount':
+                            display_df[col] = display_df[col].astype(str).str.strip()
+                            display_df[col] = display_df[col].replace(['nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a'], '')
+                    
+                    # Format the budget column with currency symbol
+                    if 'Budget_Amount' in display_df.columns and 'Currency_Symbol' in extracted_data.columns:
+                        display_df['Budget_Amount'] = extracted_data.apply(
+                            lambda row: f"{row['Currency_Symbol']}{row['Budget_Amount']:,.2f}" if row['Budget_Amount'] > 0 else '', axis=1
+                        )
+                    
+                    # Ensure max 3 columns with Budget_Amount last
+                    if len(display_df.columns) > 3:
+                        non_budget_cols = [col for col in display_df.columns if col != 'Budget_Amount'][:2]
+                        if 'Budget_Amount' in display_df.columns:
+                            final_cols = non_budget_cols + ['Budget_Amount']
+                        else:
+                            final_cols = non_budget_cols[:3]
+                        display_df = display_df[final_cols]
+                    elif 'Budget_Amount' in display_df.columns:
+                        # Reorder columns to put Budget_Amount last
+                        budget_col = display_df.pop('Budget_Amount')
+                        display_df['Budget_Amount'] = budget_col
+                    
+                    st.dataframe(display_df, use_container_width=True)
                 
                 # Show column information
                 if st.expander("📋 Column Information"):
                     col_info = []
-                    for col in display_df.columns:
+                    sample_row = extracted_data.iloc[0] if not extracted_data.empty else {}
+                    display_columns = [col for col in extracted_data.columns 
+                                     if col not in ['Currency_Symbol', 'Original_Text', 'Source', 
+                                                   'Budget_Column', 'Primary_Header', 'Secondary_Header', 
+                                                   'Budget_Header', 'Line_Number']]
+                    
+                    for col in display_columns[:3]:  # Show info for max 3 columns
                         if col != 'Budget_Amount':
                             col_info.append(f"**{col}:** Data from original file columns")
                         else:
@@ -960,9 +1152,9 @@ def display_budget_results(result, single_file=True):
                     info_text = ""
                     row_data = extracted_data.loc[highest_budget['index']]
                     
-                    # Display each meaningful column
-                    for col in display_columns:
-                        if pd.notna(row_data[col]) and str(row_data[col]).strip():
+                    # Display each meaningful column (max 3 columns)
+                    for col in display_columns[:2]:  # Show max 2 non-budget columns
+                        if pd.notna(row_data[col]) and str(row_data[col]).strip() and str(row_data[col]).strip() not in ['nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a']:
                             info_text += f"**{col}:** {row_data[col]}\n\n"
                     
                     info_text += f"**Amount:** {currency_symbol}{highest_budget['budget_amount']:,.2f}"
@@ -976,10 +1168,10 @@ def display_budget_results(result, single_file=True):
                     if 'sheets_processed' in result:
                         st.write(f"**Excel Sheets Processed:** {result['sheets_processed']}")
                 
-                # Download option
+                # Download option for all data
                 csv_data = extracted_data.to_csv(index=False)
                 st.download_button(
-                    label="📥 Download Results as CSV",
+                    label="📥 Download All Results as CSV",
                     data=csv_data,
                     file_name=f"budget_data_{result['file_name'].replace('.', '_')}.csv",
                     mime="text/csv"

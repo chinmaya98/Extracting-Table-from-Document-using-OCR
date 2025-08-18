@@ -102,11 +102,16 @@ def standardize_dataframe(df):
 
     df.columns = [str(col) for col in df.columns]
 
+    # Handle empty/null/NaN values properly - keep them as empty strings, don't fill with text
     for col in df.columns:
         if df[col].dtype == 'object':
+            # Replace various null representations with empty strings
+            df[col] = df[col].replace([pd.NA, None, 'nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a', '#N/A', '#NULL!'], '')
             df[col] = df[col].astype(str)
+            # Clean up any remaining 'nan' strings
+            df[col] = df[col].replace('nan', '')
         elif pd.api.types.is_numeric_dtype(df[col]):
-            df[col] = df[col].fillna(0)
+            df[col] = df[col].fillna('')  # Use empty string instead of 0 for display
     return df
 
 def preprocess_dataframe(df):
@@ -180,38 +185,135 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
             st.error(f"❌ Error processing file: {e}")
 
     if ext == ".pdf" and st.session_state.get("filtered_tables"):
+        tables = st.session_state["filtered_tables"]
         all_cleaned_tables = []
-        for i, df in enumerate(st.session_state["filtered_tables"], start=1):
-            df = standardize_dataframe(extractor.clean_table(df).fillna(""))
-            df.columns = deduplicate_columns(df.columns)
-            all_cleaned_tables.append(df)
+        
+        if len(tables) > 1:
+            # Display multiple tables in 3-column layout
+            st.subheader(f"📊 Extracted Tables ({len(tables)} tables found)")
+            
+            # Group tables into rows of 3
+            tables_per_row = 3
+            table_groups = []
+            current_group = []
+            
+            for i, df in enumerate(tables, start=1):
+                df = standardize_dataframe(extractor.clean_table(df))
+                # Handle empty values properly - ensure they show as empty cells
+                df = df.replace(['nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a'], '')
+                df.columns = deduplicate_columns(df.columns)
+                all_cleaned_tables.append(df)
+                
+                current_group.append((i, df))
+                
+                if len(current_group) == tables_per_row or i == len(tables):
+                    table_groups.append(current_group)
+                    current_group = []
+            
+            # Display each group of tables in columns
+            for group in table_groups:
+                cols = st.columns(len(group))
+                
+                for col_idx, (table_num, table_df) in enumerate(group):
+                    with cols[col_idx]:
+                        st.markdown(f"**Table {table_num}**")
+                        st.dataframe(table_df, use_container_width=True, height=300)
+                        
+                        # Individual download button
+                        csv_data = table_df.to_csv(index=False).encode("utf-8")
+                        st.download_button(
+                            label=f"📥 CSV",
+                            data=csv_data,
+                            file_name=f"table_{table_num}.csv",
+                            mime="text/csv",
+                            key=f"table_csv_{table_num}"
+                        )
+        else:
+            # Single table display
+            for i, df in enumerate(tables, start=1):
+                df = standardize_dataframe(extractor.clean_table(df))
+                df = df.replace(['nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a'], '')
+                df.columns = deduplicate_columns(df.columns)
+                all_cleaned_tables.append(df)
 
-            st.subheader(f"📊 Table {i}")
-            st.dataframe(df)
+                st.subheader(f"📊 Table {i}")
+                st.dataframe(df)
 
-            download_table_as_json(df, i)
+                download_table_as_json(df, i)
 
-        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-        add_download_buttons(combined_df, label_prefix="All_Tables")
+        # Combined download option
+        if all_cleaned_tables:
+            combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
+            add_download_buttons(combined_df, label_prefix="All_Tables")
 
     if ext in [".xlsx", ".xls"] and st.session_state.get("excel_sheets"):
         sheets = st.session_state["excel_sheets"]
+        sheet_items = list(sheets.items())
         all_cleaned_tables = []
-        for i, (sheet_name, sheet_df) in enumerate(sheets.items(), start=1):
-            sheet_df = standardize_dataframe(sheet_df)
-            if sheet_df.empty:
-                st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
-                continue
+        
+        if len(sheet_items) > 1:
+            # Display multiple sheets in 3-column layout
+            st.subheader(f"📊 Excel Sheets ({len(sheet_items)} sheets found)")
+            
+            # Group sheets into rows of 3
+            sheets_per_row = 3
+            sheet_groups = []
+            current_group = []
+            
+            for i, (sheet_name, sheet_df) in enumerate(sheet_items, start=1):
+                sheet_df = standardize_dataframe(sheet_df)
+                if sheet_df.empty:
+                    continue
+                
+                # Handle empty values properly - ensure they show as empty cells
+                sheet_df = sheet_df.replace(['nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a'], '')
+                sheet_df.columns = deduplicate_columns(sheet_df.columns)
+                all_cleaned_tables.append(sheet_df)
+                
+                current_group.append((sheet_name, sheet_df))
+                
+                if len(current_group) == sheets_per_row or i == len(sheet_items):
+                    sheet_groups.append(current_group)
+                    current_group = []
+            
+            # Display each group of sheets in columns
+            for group in sheet_groups:
+                cols = st.columns(len(group))
+                
+                for col_idx, (sheet_name, sheet_df) in enumerate(group):
+                    with cols[col_idx]:
+                        st.markdown(f"**Sheet: {sheet_name}**")
+                        st.dataframe(sheet_df, use_container_width=True, height=300)
+                        
+                        # Individual download button
+                        csv_data = sheet_df.to_csv(index=False).encode("utf-8")
+                        st.download_button(
+                            label=f"📥 CSV",
+                            data=csv_data,
+                            file_name=f"sheet_{sheet_name}.csv",
+                            mime="text/csv",
+                            key=f"sheet_csv_{sheet_name}"
+                        )
+        else:
+            # Single sheet display
+            for i, (sheet_name, sheet_df) in enumerate(sheet_items, start=1):
+                sheet_df = standardize_dataframe(sheet_df)
+                if sheet_df.empty:
+                    st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
+                    continue
 
-            sheet_df.columns = deduplicate_columns(sheet_df.columns)
-            all_cleaned_tables.append(sheet_df)
+                sheet_df = sheet_df.replace(['nan', 'NaN', 'NULL', 'null', 'None', 'N/A', 'n/a'], '')
+                sheet_df.columns = deduplicate_columns(sheet_df.columns)
+                all_cleaned_tables.append(sheet_df)
 
-            st.subheader(f"📊 Sheet: {sheet_name}")
-            st.dataframe(sheet_df, use_container_width=True)
+                st.subheader(f"📊 Sheet: {sheet_name}")
+                st.dataframe(sheet_df, use_container_width=True)
 
-            download_table_as_json(sheet_df, i)
+                download_table_as_json(sheet_df, i)
 
-        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-        add_download_buttons(combined_df, label_prefix="All_Sheets")
+        # Combined download option
+        if all_cleaned_tables:
+            combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
+            add_download_buttons(combined_df, label_prefix="All_Sheets")
 
     return ext
