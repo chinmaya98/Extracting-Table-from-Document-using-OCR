@@ -104,6 +104,12 @@ def contains_money(df):
     return False
 
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
+    # Inject custom CSS for table styling
+    try:
+        with open("styles.css") as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except Exception:
+        pass
     if "processed_file" not in st.session_state or st.session_state["processed_file"] != selected_blob_file:
         st.session_state["processed_file"] = selected_blob_file
         st.session_state["filtered_tables"] = []
@@ -285,8 +291,8 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
             all_cleaned_tables.append(df)
 
             st.subheader(f"📊 Table {i}")
-            st.dataframe(df)
-
+            # Render table as HTML so CSS applies (headers bold)
+            st.markdown(df.to_html(index=False, escape=False), unsafe_allow_html=True)
             download_table_as_json(df, i)
 
         if all_cleaned_tables:
