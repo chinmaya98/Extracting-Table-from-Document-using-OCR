@@ -112,6 +112,22 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
 
     ext = os.path.splitext(selected_blob_file)[1].lower()
 
+
+
+
+    def reset_processed():
+        st.session_state["processed"] = False
+        st.session_state["filtered_tables"] = []
+        st.session_state["excel_sheets"] = {}
+
+    extraction_mode = st.radio(
+        "Extraction Mode",
+        ["Table Extraction", "Budget Extraction"],
+        index=0,
+        on_change=reset_processed
+    )
+    budget_extraction = extraction_mode == "Budget Extraction"
+
     if st.button("Extract table from Files") and not st.session_state["processed"]:
         try:
             blob_bytes = blob_manager.download_file(selected_blob_file)
@@ -135,6 +151,42 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
                             continue
 
                         table = standardize_dataframe(table)
+                        # If budget extraction is enabled, filter columns
+                        if budget_extraction:
+                            # Find description/related column
+                            desc_col = None
+                            for col in table.columns:
+                                if any(x in col.lower() for x in ["desc", "item", "purpose", "details", "name"]):
+                                    desc_col = col
+                                    break
+                            # Find highest budget column
+                            import numpy as np
+                            budget_cols = [col for col in table.columns if any(x in col.lower() for x in ["budget", "amount", "cost", "price", "total", "$", "inr", "usd", "eur", "gbp", "aud", "cad", "₹", "€", "£"])]
+                            highest_col = None
+                            max_sum = -np.inf
+                            max_count = -1
+                            for col in budget_cols:
+                                try:
+                                    vals = pd.to_numeric(table[col].astype(str).str.replace(",", "").str.extract(r"([\d.]+)")[0], errors="coerce")
+                                    col_sum = vals.sum()
+                                    col_count = vals.notnull().sum()
+                                    if col_sum > max_sum:
+                                        max_sum = col_sum
+                                        max_count = col_count
+                                        highest_col = col
+                                    elif col_sum == max_sum:
+                                        if col_count > max_count:
+                                            max_count = col_count
+                                            highest_col = col
+                                except Exception:
+                                    continue
+                            show_cols = []
+                            if desc_col:
+                                show_cols.append(desc_col)
+                            if highest_col:
+                                show_cols.append(highest_col)
+                            if show_cols:
+                                table = table[show_cols]
                         st.session_state["filtered_tables"].append(table)
                     except Exception as e:
                         st.error(f"Error processing table {i+1}: {e}")
@@ -163,6 +215,35 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
                         if not contains_money(table):
                             continue
                         table = standardize_dataframe(table)
+                        # If budget extraction is enabled, filter columns
+                        if budget_extraction:
+                            # Find description/related column
+                            desc_col = None
+                            for col in table.columns:
+                                if any(x in col.lower() for x in ["desc", "item", "purpose", "details", "name"]):
+                                    desc_col = col
+                                    break
+                            # Find highest budget column
+                            import numpy as np
+                            budget_cols = [col for col in table.columns if any(x in col.lower() for x in ["budget", "amount", "cost", "price", "total", "$", "inr", "usd", "eur", "gbp", "aud", "cad", "₹", "€", "£"])]
+                            highest_col = None
+                            max_sum = -np.inf
+                            for col in budget_cols:
+                                try:
+                                    vals = pd.to_numeric(table[col].astype(str).str.replace(",", "").str.extract(r"([\d.]+)")[0], errors="coerce")
+                                    col_sum = vals.sum()
+                                    if col_sum > max_sum:
+                                        max_sum = col_sum
+                                        highest_col = col
+                                except Exception:
+                                    continue
+                            show_cols = []
+                            if desc_col:
+                                show_cols.append(desc_col)
+                            if highest_col:
+                                show_cols.append(highest_col)
+                            if show_cols:
+                                table = table[show_cols]
                         st.session_state["filtered_tables"].append(table)
                     except Exception as e:
                         st.error(f"Error processing table {i+1}: {e}")
@@ -197,7 +278,9 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
     if ext == ".pdf" and st.session_state.get("filtered_tables"):
         all_cleaned_tables = []
         for i, df in enumerate(st.session_state["filtered_tables"], start=1):
-            df = standardize_dataframe(extractor.clean_table(df).fillna(""))
+            # Only clean and deduplicate columns that remain after budget extraction
+            df = extractor.clean_table(df).fillna("")
+            df = standardize_dataframe(df)
             df.columns = deduplicate_columns(df.columns)
             all_cleaned_tables.append(df)
 
@@ -206,8 +289,9 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
 
             download_table_as_json(df, i)
 
-        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-        add_download_buttons(combined_df, label_prefix="All_Tables")
+        if all_cleaned_tables:
+            combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
+            add_download_buttons(combined_df, label_prefix="All_Tables")
 
     if ext in [".xlsx", ".xls"] and st.session_state.get("excel_sheets"):
         sheets = st.session_state["excel_sheets"]
