@@ -1,12 +1,13 @@
-import pandas as pd
 import io
+import os
+from PIL import Image
+import filetype
+import pandas as pd
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
-from utils.currency_utils import contains_money
-import os
 from dotenv import load_dotenv
-from PIL import Image
+from utils.currency_utils import contains_money
 
 class AzureConfig:
     """
@@ -51,10 +52,13 @@ class BlobManager:
         except Exception as e:
             raise RuntimeError(f"BlobManager initialization failed: {e}")
 
-    def list_files(self, extensions=(".pdf", ".xlsx", ".xls")):
-        """Lists files in the container with given extensions."""
+    def list_files(self, extensions=None):
+        """Lists all files in the container, or only those with given extensions if specified."""
         try:
-            return [b.name for b in self.container_client.list_blobs() if b.name.lower().endswith(extensions)]
+            if extensions:
+                return [b.name for b in self.container_client.list_blobs() if b.name.lower().endswith(extensions)]
+            else:
+                return [b.name for b in self.container_client.list_blobs()]
         except Exception as e:
             raise RuntimeError(f"Failed to list files in Blob Storage: {e}")
 
@@ -96,6 +100,31 @@ class TableExtractor:
             return tables
         except Exception as e:
             raise RuntimeError(f"Failed to extract tables from PDF: {e}")
+
+    def extract_from_image(self, image_bytes):
+        """Extracts tables from an image file using Azure Document Intelligence."""
+        # Detect image type for content_type
+        kind = filetype.guess(image_bytes)
+        if kind is None or not kind.mime.startswith("image/"):
+            raise ValueError("Unsupported or undetectable image type for table extraction.")
+        content_type = kind.mime
+        poller = self.client.begin_analyze_document(
+            model_id="prebuilt-layout",
+            body=image_bytes,
+            content_type=content_type
+        )
+        result = poller.result()
+        tables = []
+        for table in result.tables:
+            nrows = table.row_count
+            ncols = table.column_count
+            cells = [["" for _ in range(ncols)] for _ in range(nrows)]
+            for cell in table.cells:
+                cells[cell.row_index][cell.column_index] = cell.content
+            # Use the first row as header if possible
+            df = pd.DataFrame(cells[1:], columns=cells[0]) if nrows > 1 else pd.DataFrame(cells)
+            tables.append(df)
+        return tables
 
     def process_file(self, file_bytes, file_ext):
         """Processes a file and extracts tables based on its extension."""

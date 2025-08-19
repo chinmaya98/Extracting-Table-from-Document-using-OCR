@@ -150,8 +150,42 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
                 if not sheets:
                     st.warning("⚠️ No sheets found in the Excel file.")
 
+            elif ext in [".png", ".jpg", ".jpeg", ".tiff"]:
+                tables = extractor.extract_from_image(blob_bytes)
+                st.session_state["filtered_tables"] = []
+                for i, table in enumerate(tables):
+                    if not isinstance(table, pd.DataFrame):
+                        continue
+                    if table.empty:
+                        continue
+                    try:
+                        table = preprocess_dataframe(table)
+                        if not contains_money(table):
+                            continue
+                        table = standardize_dataframe(table)
+                        st.session_state["filtered_tables"].append(table)
+                    except Exception as e:
+                        st.error(f"Error processing table {i+1}: {e}")
+
+                if not st.session_state["filtered_tables"]:
+                    st.warning("⚠️ No valid budget-related tables found in the selected image file.")
+                else:
+                    # 👉 Add your block here:
+                    all_cleaned_tables = []
+                    for i, df in enumerate(st.session_state["filtered_tables"], start=1):
+                        df = standardize_dataframe(extractor.clean_table(df).fillna(""))
+                        df.columns = deduplicate_columns(df.columns)
+                        all_cleaned_tables.append(df)
+
+                        st.subheader(f"📊 Table {i}")
+                        st.dataframe(df)
+
+                        download_table_as_json(df, i)
+
+                    combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
+                    add_download_buttons(combined_df, label_prefix="All_Tables")
             else:
-                st.info("Unsupported file format. Please select a PDF or Excel file.")
+                st.info("Unsupported file format. Please select a PDF, Excel, or image file.")
                 st.session_state["filtered_tables"] = []
                 st.session_state["excel_sheets"] = {}
 
