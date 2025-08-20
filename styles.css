@@ -45,3 +45,22 @@ tr:nth-child(even) {
 tr:nth-child(odd) {
     background-color: #ffffff;
 }
+
+/* Ensure headers are centered across Streamlit-rendered tables */
+.stMarkdown table th,
+.stMarkdown table thead th,
+.stTable table th,
+table thead th,
+table th {
+    text-align: center !important;
+    vertical-align: middle !important;
+}
+
+/* Ensure header text is centered when df.to_html wraps content in div/span */
+.stMarkdown table th div,
+.stMarkdown table th span,
+.stTable table th div,
+.stTable table th span {
+    display: block !important;
+    text-align: center !important;
+}
