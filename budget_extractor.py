@@ -5,25 +5,72 @@ import numpy as np
 import streamlit as st
 from typing import List, Dict, Tuple, Optional, Any
 from PIL import Image
-from azure.ai.documentintelligence import DocumentIntelligenceClient
-from azure.core.credentials import AzureKeyCredential
-from azure.storage.blob import BlobServiceClient
-from table_utils import AzureConfig, BlobManager, TableExtractor
+from table_extractor import TableExtractor, BlobManager, AzureConfig
 from utils.currency_utils import MONEY_PATTERN, MONEY_KEYWORDS, contains_money
-from ui_handler import standardize_dataframe, preprocess_dataframe, add_download_buttons, deduplicate_columns, download_table_as_json
 import os
 from dotenv import load_dotenv
+
+def handle_budget_extraction(file_name: str, blob_manager, table_extractor):
+    """Handle budget extraction process for UI integration."""
+    import streamlit as st
+    
+    try:
+        # Download file
+        file_bytes = blob_manager.download_file(file_name)
+        
+        # Create budget extractor instance
+        budget_extractor = BudgetExtractor()
+        
+        # Extract budget data
+        file_ext = os.path.splitext(file_name)[1].lower()
+        result = budget_extractor.extract_budget_data(
+            file_bytes=file_bytes, 
+            file_extension=file_ext
+        )
+        
+        if result['success']:
+            extracted_data = result['extracted_data']
+            
+            if not extracted_data.empty:
+                st.success(f"✅ Extracted {len(extracted_data)} budget entries")
+                st.subheader("💰 Budget Data")
+                st.dataframe(extracted_data, use_container_width=True)
+                
+                # Download buttons
+                csv_data = extracted_data.to_csv(index=False).encode("utf-8")
+                json_data = extracted_data.to_json(orient="records", indent=2).encode("utf-8")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "📥 Download as CSV", 
+                        csv_data, 
+                        "budget_data.csv", 
+                        "text/csv"
+                    )
+                with col2:
+                    st.download_button(
+                        "📥 Download as JSON", 
+                        json_data, 
+                        "budget_data.json", 
+                        "application/json"
+                    )
+            else:
+                st.warning("⚠️ No budget data found in the document.")
+        else:
+            st.error(f"❌ {result['error']}")
+            
+    except Exception as e:
+        st.error(f"❌ Error processing budget extraction: {e}")
+
 
 class BudgetExtractor:
     """Budget and label extraction from PDFs, images, and Excel files."""
     
     def __init__(self):
         load_dotenv()
-        self.config = AzureConfig()
-        self.document_client = self.config.get_document_client()
-        self.blob_service_client = self.config.get_blob_service_client()
-        self.blob_manager = BlobManager(self.blob_service_client, self.config.blob_container)
-        self.table_extractor = TableExtractor(self.document_client)
+        self.table_extractor = TableExtractor.get_extractor()
+        self.blob_manager = TableExtractor.get_blob_manager()
         
         # Common patterns and keywords
         self.currency_symbols = ['$', '€', '£', '¥', '₹', '₩', '₽', 'Rs', 'USD', 'EUR', 'GBP', 'INR']
@@ -116,25 +163,16 @@ class BudgetExtractor:
     def _extract_from_pdf(self, pdf_bytes: bytes, file_name: str) -> Dict[str, Any]:
         """Extract budget data from PDF files."""
         try:
-            # Delegate table extraction to TableExtractor (avoids duplicating parsing logic)
+            # Use table extractor to get structured table data from PDF
             tables = self.table_extractor.extract_from_pdf(pdf_bytes if isinstance(pdf_bytes, (bytes, bytearray)) else pdf_bytes.read())
             all_budget_data = []
 
             for i, table_df in enumerate(tables):
-                # Use the shared cleaner from TableExtractor and local dataframe cleaning
-                try:
-                    table_df = TableExtractor.clean_table(table_df)
-                except Exception:
-                    pass
-
-                table_df = self._clean_dataframe(table_df)
-                processed = self._extract_budget_from_dataframe(table_df, f"PDF_Table_{i}")
-                if not processed.empty:
-                    all_budget_data.append(processed)
-
-            # Note: text-based extraction (inline amounts outside tables) is intentionally omitted here
-            # to avoid duplicating Azure Document Intelligence calls; keep focus on table extraction and
-            # reuse shared table utilities from table_utils.
+                if contains_money(table_df):
+                    # Convert table to budget format using standardized 3-column approach
+                    budget_data = self._process_table_to_budget_format(table_df)
+                    if not budget_data.empty:
+                        all_budget_data.append(budget_data)
 
             return self._create_success_result(all_budget_data, file_name, 'PDF')
             
@@ -144,25 +182,33 @@ class BudgetExtractor:
     def _extract_from_excel(self, excel_bytes: bytes, file_name: str) -> Dict[str, Any]:
         """Extract budget data from Excel files."""
         try:
-            excel_file = pd.ExcelFile(io.BytesIO(excel_bytes))
+            # Use table extractor to get structured data from Excel
+            tables, sheets = self.table_extractor.extract_from_excel(excel_bytes, file_name)
             all_budget_data = []
             sheets_processed = []
             
-            for sheet_name in excel_file.sheet_names:
-                try:
-                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
-                    if df.empty:
-                        continue
-                    
-                    df = self._clean_dataframe(df)
-                    processed_data = self._process_excel_sheet(df, f"Excel_{sheet_name}")
-                    if not processed_data.empty:
-                        all_budget_data.append(processed_data)
-                        sheets_processed.append(sheet_name)
-                        
-                except Exception as sheet_error:
-                    print(f"Error processing sheet {sheet_name}: {sheet_error}")
-                    continue
+            # Process tables from table extractor
+            for i, table_df in enumerate(tables):
+                if contains_money(table_df):
+                    # Convert table to budget format using standardized 3-column approach
+                    budget_data = self._process_table_to_budget_format(table_df)
+                    if not budget_data.empty:
+                        all_budget_data.append(budget_data)
+            
+            # Also process individual sheets if they weren't captured in tables
+            for sheet_name, sheet_df in sheets.items():
+                if contains_money(sheet_df):
+                    budget_data = self._process_table_to_budget_format(sheet_df)
+                    if not budget_data.empty:
+                        # Check if this data is already in all_budget_data to avoid duplicates
+                        is_duplicate = False
+                        for existing_data in all_budget_data:
+                            if existing_data.shape == budget_data.shape and existing_data.equals(budget_data):
+                                is_duplicate = True
+                                break
+                        if not is_duplicate:
+                            all_budget_data.append(budget_data)
+                            sheets_processed.append(sheet_name)
             
             result = self._create_success_result(all_budget_data, file_name, 'Excel')
             result['sheets_processed'] = sheets_processed
@@ -174,19 +220,55 @@ class BudgetExtractor:
     def _extract_from_image(self, image_bytes: bytes, file_name: str) -> Dict[str, Any]:
         """Extract budget data from image files."""
         try:
-            image = Image.open(io.BytesIO(image_bytes))
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
+            # Use table extractor to get structured table data from image
+            tables = self.table_extractor.extract_from_image(image_bytes)
             
-            # Convert to PDF for processing
-            pdf_bytes = io.BytesIO()
-            image.save(pdf_bytes, format="PDF", quality=95)
-            pdf_bytes.seek(0)
+            if not tables:
+                # Fallback: convert image to PDF and try again
+                image = Image.open(io.BytesIO(image_bytes))
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+                
+                # Convert to PDF for processing
+                pdf_bytes = io.BytesIO()
+                image.save(pdf_bytes, format="PDF", quality=95)
+                pdf_bytes.seek(0)
+                
+                return self._extract_from_pdf(pdf_bytes.read(), file_name)
             
-            return self._extract_from_pdf(pdf_bytes.read(), file_name)
+            # Process extracted tables
+            all_budget_data = []
+            for table_df in tables:
+                if contains_money(table_df):
+                    # Convert table to budget format
+                    budget_data = self._process_table_to_budget_format(table_df)
+                    if not budget_data.empty:
+                        all_budget_data.append(budget_data)
+            
+            return self._create_success_result(all_budget_data, file_name, "image")
             
         except Exception as e:
             return self._create_error_result(str(e), file_name)
+
+    def _process_table_to_budget_format(self, table_df: pd.DataFrame) -> pd.DataFrame:
+        """Convert a regular table DataFrame to budget format with Label1, Label2, Budget_Amount."""
+        if table_df.empty:
+            return pd.DataFrame()
+            
+        # Apply the 3-column standardization
+        budget_df = self._standardize_to_3_columns(table_df)
+        
+        # Add additional required columns
+        if 'Currency_Symbol' not in budget_df.columns:
+            budget_df['Currency_Symbol'] = '$'
+            
+        # Ensure Budget_Amount is numeric
+        budget_df['Budget_Amount'] = pd.to_numeric(budget_df['Budget_Amount'], errors='coerce').fillna(0)
+        
+        # Filter out rows with no budget amount
+        budget_df = budget_df[budget_df['Budget_Amount'] > 0]
+        
+        return budget_df
 
     def _create_success_result(self, all_budget_data: List[pd.DataFrame], file_name: str, file_type: str) -> Dict[str, Any]:
         """Create standardized success result."""
@@ -207,7 +289,8 @@ class BudgetExtractor:
         Deprecated: table parsing is handled by TableExtractor.extract_from_pdf now.
         This stub remains for backward compatibility.
         """
-        # Deprecated: table parsing now handled by TableExtractor.extract_from_pdf
+        # Removed: parsing is handled by TableExtractor.extract_from_pdf.
+        # This method was a deprecated stub and has been intentionally left empty.
         return pd.DataFrame()
 
     def _process_excel_sheet(self, df: pd.DataFrame, source_name: str) -> pd.DataFrame:
@@ -560,6 +643,9 @@ class BudgetExtractor:
         if combined_df.empty:
             return pd.DataFrame()
         
+        # Apply 3-column standardization
+        combined_df = self._standardize_to_3_columns(combined_df)
+        
         # Clean and standardize
         if 'Budget_Amount' not in combined_df.columns:
             combined_df['Budget_Amount'] = 0.0
@@ -573,6 +659,176 @@ class BudgetExtractor:
             combined_df = combined_df.sort_values('Budget_Amount', ascending=False).reset_index(drop=True)
         
         return combined_df
+
+    def _standardize_to_3_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Standardize DataFrame to 3-column layout: Label1, Label2, Budget_Amount."""
+        if df.empty:
+            return df
+            
+        # Create the 3-column structure
+        result_df = pd.DataFrame()
+        
+        # Find the main description/label column
+        label1_col = self._find_description_column(df)
+        
+        # Find the amount/budget column
+        amount_col = self._find_amount_column(df)
+        
+        # Find secondary label/details column
+        label2_col = self._find_secondary_column(df, exclude=[label1_col, amount_col])
+        
+        # Build the 3-column DataFrame
+        if label1_col:
+            result_df['Label1'] = df[label1_col].astype(str).str.strip()
+        else:
+            result_df['Label1'] = 'Budget Item'
+            
+        if label2_col:
+            result_df['Label2'] = df[label2_col].astype(str).str.strip()
+        else:
+            # Generate secondary labels from row indices or use first available column
+            other_cols = [col for col in df.columns if col not in [label1_col, amount_col]]
+            if other_cols:
+                result_df['Label2'] = df[other_cols[0]].astype(str).str.strip()
+            else:
+                result_df['Label2'] = f'Item {df.index + 1}'
+        
+        if amount_col:
+            # Extract numeric values from amount column
+            amount_values = self._extract_numeric_amounts(df[amount_col])
+            result_df['Budget_Amount'] = amount_values
+        else:
+            result_df['Budget_Amount'] = 0.0
+            
+        # Clean up the result
+        result_df = result_df.fillna('')
+        result_df = result_df[result_df['Label1'].str.len() > 0]  # Remove empty labels
+        
+        return result_df
+
+    def _find_description_column(self, df: pd.DataFrame) -> Optional[str]:
+        """Find the best column to use as primary description/label."""
+        desc_keywords = ["desc", "description", "item", "name", "service", "product", 
+                        "details", "category", "title", "label", "expense", "account"]
+        
+        # First, look for exact keyword matches in column names
+        for col in df.columns:
+            col_lower = str(col).lower()
+            for keyword in desc_keywords:
+                if keyword in col_lower:
+                    return col
+                    
+        # If no keyword match, find column with most text content
+        text_scores = {}
+        for col in df.columns:
+            try:
+                # Calculate average text length as a proxy for descriptive content
+                text_lengths = df[col].astype(str).str.len()
+                avg_length = text_lengths.mean()
+                # Prefer columns with reasonable text length (not too short, not too long)
+                if 3 <= avg_length <= 50:
+                    text_scores[col] = avg_length
+            except:
+                continue
+                
+        if text_scores:
+            return max(text_scores.items(), key=lambda x: x[1])[0]
+            
+        # Fallback: return first column if available
+        return df.columns[0] if len(df.columns) > 0 else None
+
+    def _find_amount_column(self, df: pd.DataFrame) -> Optional[str]:
+        """Find the best column to use as budget amount."""
+        amount_keywords = ["amount", "budget", "cost", "price", "total", "value", 
+                          "sum", "money", "$", "₹", "€", "£", "usd", "inr", "eur", "gbp"]
+        
+        # First, look for keyword matches in column names
+        best_col = None
+        max_numeric_sum = 0
+        
+        for col in df.columns:
+            col_lower = str(col).lower()
+            
+            # Check if column name contains amount keywords
+            has_money_keyword = any(keyword in col_lower for keyword in amount_keywords)
+            
+            # Check if column contains numeric values
+            try:
+                numeric_vals = self._extract_numeric_amounts(df[col])
+                numeric_sum = numeric_vals.sum()
+                
+                # Prioritize columns with money keywords and high numeric sums
+                if has_money_keyword and numeric_sum > max_numeric_sum:
+                    max_numeric_sum = numeric_sum
+                    best_col = col
+                elif not best_col and numeric_sum > max_numeric_sum:
+                    max_numeric_sum = numeric_sum
+                    best_col = col
+            except:
+                continue
+                
+        return best_col
+
+    def _find_secondary_column(self, df: pd.DataFrame, exclude: List[str]) -> Optional[str]:
+        """Find the best column to use as secondary label."""
+        exclude = [col for col in exclude if col is not None]
+        
+        secondary_keywords = ["qty", "quantity", "unit", "note", "remark", "detail", 
+                             "type", "category", "department", "code", "id"]
+        
+        # Look for columns with secondary keywords
+        for col in df.columns:
+            if col in exclude:
+                continue
+                
+            col_lower = str(col).lower()
+            for keyword in secondary_keywords:
+                if keyword in col_lower:
+                    return col
+        
+        # Fallback: return first available column not in exclude list
+        for col in df.columns:
+            if col not in exclude:
+                return col
+                
+        return None
+
+    def _extract_numeric_amounts(self, series: pd.Series) -> pd.Series:
+        """Extract numeric amounts from a pandas Series."""
+        def extract_number(value):
+            if pd.isna(value):
+                return 0.0
+                
+            value_str = str(value).strip()
+            if not value_str:
+                return 0.0
+                
+            # Remove common currency symbols and separators
+            cleaned = re.sub(r'[^\d.,\-+]', '', value_str)
+            
+            # Handle different number formats
+            if ',' in cleaned and '.' in cleaned:
+                # Assume last part after comma or dot is decimal
+                if cleaned.rfind(',') > cleaned.rfind('.'):
+                    # European format: 1.234,56
+                    cleaned = cleaned.replace('.', '').replace(',', '.')
+                else:
+                    # US format: 1,234.56
+                    cleaned = cleaned.replace(',', '')
+            elif ',' in cleaned:
+                # Check if comma is likely a decimal separator
+                parts = cleaned.split(',')
+                if len(parts) == 2 and len(parts[1]) <= 2:
+                    cleaned = cleaned.replace(',', '.')
+                else:
+                    cleaned = cleaned.replace(',', '')
+            
+            try:
+                return float(cleaned)
+            except (ValueError, TypeError):
+                return 0.0
+                
+        return series.apply(extract_number)
 
     def _find_highest_budget_row(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         """Find the row with highest budget amount."""

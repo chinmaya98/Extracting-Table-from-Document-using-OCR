@@ -10,6 +10,7 @@ azure-core>=1.28.0
 
 # Image processing
 Pillow>=10.0.0
+filetype>=1.2.0
 
 # Text processing and regex
 regex>=2023.0.0
@@ -18,7 +19,8 @@ regex>=2023.0.0
 python-dotenv>=1.0.0
 
 # Data processing
-openpyxl>=3.1.0  # For Excel file processing
+openpyxl>=3.1.0  # For Excel file processing (.xlsx)
+xlrd>=2.0.1  # For Excel file reading (.xls)
 xlsxwriter>=3.1.0  # For Excel file writing
 
 # Optional: For enhanced data analysis
