@@ -7,6 +7,9 @@ import os
 import pandas as pd
 from PIL import Image
 import filetype
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.patches as patches
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.core.credentials import AzureKeyCredential
 from azure.storage.blob import BlobServiceClient
@@ -111,29 +114,192 @@ class TableExtractor:
             raise RuntimeError(f"Failed to extract tables from image: {e}")
 
     def extract_from_excel(self, excel_bytes: bytes, file_name: str = "") -> Tuple[List[pd.DataFrame], dict]:
-        """Extract tables from Excel file."""
+        """Extract tables from Excel file by converting to PDF first."""
         try:
-            excel_file = pd.ExcelFile(io.BytesIO(excel_bytes))
+            # First, try to convert Excel to PDF and extract via PDF pipeline
+            try:
+                pdf_bytes = self._convert_excel_to_pdf(excel_bytes)
+                pdf_tables = self.extract_from_pdf(pdf_bytes)
+            except Exception as pdf_error:
+                print(f"Warning: PDF conversion failed ({pdf_error}), falling back to direct Excel processing")
+                pdf_tables = []
+            
+            # Always get original Excel data as reference/fallback
             tables = []
             sheets = {}
             
-            for sheet_name in excel_file.sheet_names:
-                try:
-                    # Read with headers
-                    df = pd.read_excel(excel_file, sheet_name=sheet_name)
-                    if not df.empty:
-                        df = self.clean_table(df)
-                        if contains_money(df):
-                            tables.append(df)
-                            sheets[sheet_name] = df
-                except Exception as e:
-                    print(f"Warning: Failed to read sheet {sheet_name}: {e}")
-                    continue
-                    
-            return tables, sheets
+            try:
+                excel_file = pd.ExcelFile(io.BytesIO(excel_bytes))
+                
+                for sheet_name in excel_file.sheet_names:
+                    try:
+                        # Try different engines for better compatibility
+                        df = None
+                        engines_to_try = ['openpyxl', 'xlrd'] if file_name.lower().endswith('.xls') else ['openpyxl']
+                        
+                        for engine in engines_to_try:
+                            try:
+                                df = pd.read_excel(excel_file, sheet_name=sheet_name, engine=engine)
+                                break
+                            except Exception as engine_error:
+                                if engine == engines_to_try[-1]:  # Last engine
+                                    print(f"Warning: Failed to read sheet {sheet_name} with all engines: {engine_error}")
+                                continue
+                        
+                        if df is not None and not df.empty:
+                            df = self.clean_table(df)
+                            if contains_money(df):
+                                tables.append(df)
+                                sheets[sheet_name] = df
+                                
+                    except Exception as e:
+                        print(f"Warning: Failed to read sheet {sheet_name}: {e}")
+                        continue
+                        
+            except Exception as excel_error:
+                print(f"Warning: Excel processing failed: {excel_error}")
+            
+            # Combine PDF extracted tables (if any) with direct Excel tables
+            final_tables = pdf_tables if pdf_tables else tables
+            
+            if not final_tables and not sheets:
+                raise RuntimeError("No tables could be extracted from Excel file")
+                
+            return final_tables, sheets
             
         except Exception as e:
             raise RuntimeError(f"Failed to extract tables from Excel: {e}")
+
+    def _convert_excel_to_pdf(self, excel_bytes: bytes) -> bytes:
+        """Convert Excel file to PDF for consistent table extraction."""
+        try:
+            # Try different methods to read Excel file
+            excel_file = None
+            
+            try:
+                excel_file = pd.ExcelFile(io.BytesIO(excel_bytes))
+            except Exception as e:
+                # If xlrd is missing for .xls files, try with openpyxl
+                if "xlrd" in str(e).lower():
+                    try:
+                        # Try converting bytes to see if it's actually .xlsx
+                        excel_file = pd.ExcelFile(io.BytesIO(excel_bytes), engine='openpyxl')
+                    except Exception:
+                        raise RuntimeError(f"Cannot read Excel file. For .xls files, xlrd>=2.0.1 is required. For .xlsx files, openpyxl is required. Error: {e}")
+                else:
+                    raise e
+            
+            if not excel_file:
+                raise RuntimeError("Could not read Excel file with any available engine")
+            
+            # Create PDF in memory
+            pdf_buffer = io.BytesIO()
+            
+            with PdfPages(pdf_buffer, keep_empty=False) as pdf:
+                for sheet_name in excel_file.sheet_names:
+                    try:
+                        # Try reading with appropriate engine
+                        df = None
+                        
+                        # Determine engines to try based on file type hints
+                        engines_to_try = ['openpyxl', 'xlrd']
+                        
+                        for engine in engines_to_try:
+                            try:
+                                df = pd.read_excel(excel_file, sheet_name=sheet_name, engine=engine)
+                                break
+                            except Exception as engine_error:
+                                if "xlrd" in str(engine_error).lower() and engine == 'xlrd':
+                                    # xlrd not available, skip this engine
+                                    continue
+                                elif engine == engines_to_try[-1]:  # Last engine failed
+                                    print(f"Warning: Could not read sheet {sheet_name} with any engine: {engine_error}")
+                                    break
+                        
+                        if df is None or df.empty:
+                            continue
+                            
+                        # Create a new figure for each sheet
+                        fig, ax = plt.subplots(figsize=(11.69, 8.27))  # A4 landscape
+                        ax.axis('tight')
+                        ax.axis('off')
+                        
+                        # Add sheet title
+                        fig.suptitle(f'Sheet: {sheet_name}', fontsize=16, fontweight='bold')
+                        
+                        # Convert DataFrame to table format that looks like Excel
+                        # Handle large DataFrames by chunking if necessary
+                        max_rows_per_page = 25
+                        max_cols_per_page = 8
+                        
+                        # Split large tables into chunks
+                        for row_start in range(0, len(df), max_rows_per_page):
+                            for col_start in range(0, len(df.columns), max_cols_per_page):
+                                row_end = min(row_start + max_rows_per_page, len(df))
+                                col_end = min(col_start + max_cols_per_page, len(df.columns))
+                                
+                                df_chunk = df.iloc[row_start:row_end, col_start:col_end]
+                                
+                                if df_chunk.empty:
+                                    continue
+                                
+                                # Create new page for each chunk if not first chunk
+                                if row_start > 0 or col_start > 0:
+                                    fig, ax = plt.subplots(figsize=(11.69, 8.27))
+                                    ax.axis('tight')
+                                    ax.axis('off')
+                                    fig.suptitle(f'Sheet: {sheet_name} (Part {row_start//max_rows_per_page + 1}-{col_start//max_cols_per_page + 1})', 
+                                               fontsize=14)
+                                
+                                # Convert DataFrame values to strings and handle NaN
+                                table_data = df_chunk.fillna('').astype(str)
+                                
+                                # Create table
+                                table = ax.table(
+                                    cellText=table_data.values,
+                                    colLabels=table_data.columns,
+                                    cellLoc='center',
+                                    loc='center',
+                                    bbox=[0.1, 0.1, 0.8, 0.8]
+                                )
+                                
+                                # Style the table to look professional
+                                table.auto_set_font_size(False)
+                                table.set_fontsize(9)
+                                table.scale(1, 1.5)
+                                
+                                # Style header row
+                                for i in range(len(table_data.columns)):
+                                    table[(0, i)].set_facecolor('#4CAF50')
+                                    table[(0, i)].set_text_props(weight='bold', color='white')
+                                
+                                # Style data cells
+                                for i in range(1, len(table_data) + 1):
+                                    for j in range(len(table_data.columns)):
+                                        if i % 2 == 0:
+                                            table[(i, j)].set_facecolor('#f0f0f0')
+                                        else:
+                                            table[(i, j)].set_facecolor('white')
+                                
+                                # Save this page
+                                pdf.savefig(fig, bbox_inches='tight', dpi=150)
+                                plt.close(fig)
+                        
+                    except Exception as sheet_error:
+                        print(f"Warning: Failed to convert sheet {sheet_name} to PDF: {sheet_error}")
+                        continue
+            
+            pdf_buffer.seek(0)
+            pdf_bytes = pdf_buffer.read()
+            pdf_buffer.close()
+            
+            if len(pdf_bytes) == 0:
+                raise ValueError("Failed to generate PDF from Excel file - no readable sheets found")
+                
+            return pdf_bytes
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to convert Excel to PDF: {e}")
 
     def process_file(self, file_bytes: bytes, file_extension: str) -> List[pd.DataFrame]:
         """Process file based on extension and extract tables."""

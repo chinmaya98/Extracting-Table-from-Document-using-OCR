@@ -31,15 +31,22 @@ class UIApp:
             self.budget_extractor = BudgetExtractor()
             return True
         except Exception as e:
-            st.error(
-                "Azure configuration error. Please set your environment variables:\n"
+            st.warning(
+                "Azure services not configured. Limited functionality available:\n"
+                "- Excel files can still be processed (Excel → PDF conversion)\n"
+                "- PDF and image processing requires Azure Document Intelligence\n\n"
+                "To enable full functionality, set these environment variables:\n"
                 "- DOC_INTELLIGENCE_ENDPOINT\n"
                 "- DOC_INTELLIGENCE_KEY\n" 
-                "- AZURE_BLOB_CONNECTION_STRING\n"
-                "- AZURE_BLOB_CONTAINER\n\n"
+                "- AZURE_BLOB_CONNECTION_STRING (optional)\n"
+                "- AZURE_BLOB_CONTAINER (optional)\n\n"
                 f"Details: {e}"
             )
-            return False
+            # Initialize with None client for Excel-only processing
+            self.table_extractor = TableExtractor(None)
+            self.blob_manager = None
+            self.budget_extractor = BudgetExtractor()
+            return False  # Azure not configured but can still do Excel processing
 
     def handle_blob_interaction(self):
         """Handle blob storage file selection."""
@@ -84,18 +91,28 @@ class UIApp:
                 use_container_width=True
             )
 
-    def display_extraction_mode_selector(self):
-        """Display mode selection UI."""
-        st.markdown("### Processing Mode")
-        
-        mode = st.radio(
-            "Choose extraction mode:",
-            ["Table Extraction", "Budget Extraction"],
-            index=0,
-            horizontal=True
-        )
+    def display_table_with_bold_headers(self, df: pd.DataFrame, use_container_width: bool = True):
+        """Display dataframe with bold headers using custom styling."""
+        if df.empty:
+            st.warning("No data to display")
+            return
             
-        return mode
+        # Create a copy to avoid modifying original
+        display_df = df.copy()
+        
+        # Use Streamlit's column_config to make headers bold
+        column_config = {}
+        for col in display_df.columns:
+            column_config[col] = st.column_config.Column(
+                label=f"**{col}**",  # Bold formatting
+                help=None
+            )
+        
+        st.dataframe(
+            display_df,
+            use_container_width=use_container_width,
+            column_config=column_config
+        )
 
     def process_tables(self, file_bytes: bytes, file_name: str, mode: str):
         """Process file and extract tables based on mode."""
@@ -104,10 +121,17 @@ class UIApp:
         try:
             # Extract tables using table extractor
             if file_ext == ".pdf":
+                if not self.table_extractor or not hasattr(self.table_extractor, 'document_client') or not self.table_extractor.document_client:
+                    st.error("PDF processing requires Azure Document Intelligence. Please configure Azure services.")
+                    return
                 tables = self.table_extractor.extract_from_pdf(file_bytes)
             elif file_ext in [".jpg", ".jpeg", ".png", ".tiff", ".bmp"]:
+                if not self.table_extractor or not hasattr(self.table_extractor, 'document_client') or not self.table_extractor.document_client:
+                    st.error("Image processing requires Azure Document Intelligence. Please configure Azure services.")
+                    return
                 tables = self.table_extractor.extract_from_image(file_bytes)
             elif file_ext in [".xlsx", ".xls"]:
+                # Excel processing works without Azure (uses local PDF conversion)
                 tables, sheets = self.table_extractor.extract_from_excel(file_bytes, file_name)
                 return self._display_excel_results(sheets, mode)
             else:
@@ -141,7 +165,7 @@ class UIApp:
             
             # Clean and display table
             df_clean = self.table_extractor.clean_table(df)
-            st.dataframe(df_clean, use_container_width=True)
+            self.display_table_with_bold_headers(df_clean, use_container_width=True)
             
             # Add download buttons
             self.add_download_buttons(df_clean, "Table", i)
@@ -172,7 +196,7 @@ class UIApp:
             
             if not budget_df.empty:
                 st.subheader(f"Budget Table {i}")
-                st.dataframe(budget_df, use_container_width=True)
+                self.display_table_with_bold_headers(budget_df, use_container_width=True)
                 self.add_download_buttons(budget_df, "Budget", i)
                 budget_tables.append(budget_df)
                 st.markdown("---")
@@ -366,7 +390,7 @@ class UIApp:
             else:
                 df_display = df
             
-            st.dataframe(df_display, use_container_width=True)
+            self.display_table_with_bold_headers(df_display, use_container_width=True)
             self.add_download_buttons(df_display, f"Sheet_{sheet_name}")
             all_sheets.append(df_display)
             
@@ -383,24 +407,40 @@ class UIApp:
         # Initialize app
         services_available = self.initialize_app()
         
-        if not services_available:
-            return
+        # Always use Budget Extraction mode (radio button removed)
+        extraction_mode = "Budget Extraction"
         
-        # Mode selection
-        extraction_mode = self.display_extraction_mode_selector()
-        
-        # File selection
-        selected_file = self.handle_blob_interaction()
-        
-        if selected_file:
-            # Process button
-            if st.button("Extract Tables", type="primary", use_container_width=True):
-                with st.spinner("Processing document..."):
-                    try:
-                        file_bytes = self.blob_manager.download_file(selected_file)
-                        self.process_tables(file_bytes, selected_file, extraction_mode)
-                    except Exception as e:
-                        st.error(f"Error downloading file: {e}")
+        # File selection options
+        if services_available:
+            # Full functionality with Azure and Blob storage
+            selected_file = self.handle_blob_interaction()
+            
+            if selected_file:
+                # Process button
+                if st.button("Extract Budget", type="primary", use_container_width=True):
+                    with st.spinner("Processing document..."):
+                        try:
+                            file_bytes = self.blob_manager.download_file(selected_file)
+                            self.process_tables(file_bytes, selected_file, extraction_mode)
+                        except Exception as e:
+                            st.error(f"Error downloading file: {e}")
+        else:
+            # Limited functionality - local file upload only
+            st.markdown("### File Upload")
+            uploaded_file = st.file_uploader(
+                "Upload a file to extract tables",
+                type=["xlsx", "xls"],  # Only Excel files without Azure
+                help="Excel files will be converted to PDF and processed locally"
+            )
+            
+            if uploaded_file:
+                if st.button("Extract Budget", type="primary", use_container_width=True):
+                    with st.spinner("Processing document..."):
+                        try:
+                            file_bytes = uploaded_file.read()
+                            self.process_tables(file_bytes, uploaded_file.name, extraction_mode)
+                        except Exception as e:
+                            st.error(f"Error processing file: {e}")
 
 
 # Create global app instance
