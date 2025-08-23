@@ -1,98 +1,140 @@
-# PDF Table & Budget Extractor with Azure Document Intelligence
+# Trinity Online - AI Enhanced Budget Extractor
 
-This Streamlit app allows you to **extract tables and budget information** from PDF documents, Excel files, and images using Azure Document Intelligence OCR. The app provides both traditional table extraction and advanced budget/label extraction with standardized output.
+Trinity Online is an intelligent budget table extraction system that uses **Azure Document Intelligence** and **GPT 4.1** to automatically process documents and extract structured budget data. The application features a specialized architecture with dedicated processors for different file types.
 
-**🆕 NEW: Smart Money-Based Filtering** - Automatically filters out tables that don't contain monetary values, focusing only on financial/budget-relevant data.
+**🤖 NEW: Specialized Architecture** - Refactored into dedicated processors for optimal performance and maintainability.
+
+---
+
+## 🏗️ Architecture Overview
+
+Trinity Online uses a **specialized processor architecture** to handle different file types optimally:
+
+```
+📁 Input Files
+├── PDF/Images → table_extractor_pdf_image.py → Document Intelligence OCR → AI Processing
+├── Excel Files → table_extractor_excel.py → Direct Processing → AI Processing
+└── All Files → ai_budget_extractor.py → Structured 3-Column Output
+```
+
+### 🔄 Data Flow
+
+```
+1. File Upload (Azure Blob Storage)
+   ↓
+2. File Type Detection
+   ↓
+3A. PDF/Image Path:                    3B. Excel Path:
+    - Document Intelligence OCR            - Direct sheet reading
+    - Table structure extraction           - Individual sheet processing
+    - Original header preservation         - Original header preservation
+   ↓                                      ↓
+4. AI Budget Extractor (GPT 4.1)
+   - Budget table identification
+   - Smart formatting and analysis
+   - Bold headers and totals
+   ↓
+5. Export Options (CSV, Excel, JSON)
+```
+
+---
+
+## � Core Components
+
+### 1. **table_extractor_pdf_image.py**
+**Purpose**: Specialized processor for PDF and image files
+- 🔍 Uses Azure Document Intelligence Layout Model for OCR
+- 📄 Extracts tables from PDF pages and image files
+- 🏷️ Preserves original headers from source documents
+- 💰 Filters budget-related tables automatically
+- 📊 Passes structured data to AI Budget Extractor
+
+**Supported Formats**: `.pdf`, `.jpg`, `.jpeg`, `.png`, `.tiff`, `.bmp`
+
+### 2. **table_extractor_excel.py**
+**Purpose**: Specialized processor for Excel files
+- � Direct Excel file processing (no Document Intelligence needed)
+- 📋 Processes each sheet individually in the workbook
+- 🏷️ Preserves original Excel column headers
+- 💰 Filters budget-relevant sheets automatically
+- 🔄 Supports both `.xlsx` and `.xls` formats
+
+**Key Features**:
+- Individual sheet iteration and analysis
+- Multi-engine support (openpyxl, xlrd)
+- Original header preservation per sheet
+- Sheet metadata tracking
+
+### 3. **ai_budget_extractor.py**
+**Purpose**: AI-enhanced budget processing engine
+- 🤖 GPT 4.1 powered intelligent analysis
+- 🏷️ Dynamic header extraction and bold formatting
+- 💡 Context-aware budget table identification
+- 📊 Standardized 3-column output generation
+- 🧠 AI Budget Summary generation for non-budget documents
+- 🔄 Fallback processing when AI is unavailable
+
+### 4. **ui_app.py**
+**Purpose**: Trinity Online user interface
+- 🖥️ Clean, professional Streamlit interface
+- 📁 Multi-sheet display with individual tables
+- 💾 Export options: CSV, Excel, JSON
+- 📊 Real-time processing progress
+- 🎯 Source information and sheet tracking
 
 ---
 
 ## Features
 
-### 🆕 Smart Table Filtering
-- **Automatic filtering**: Only extracts tables containing monetary values
-- **Currency detection**: Recognizes $, €, £, ₹, USD, EUR, GBP, INR and more
-- **Keyword recognition**: Identifies "amount", "budget", "price", "cost", "total", "value" headers
-- **Noise reduction**: Filters out employee lists, project status tables, and other non-financial data
-- **Built-in testing**: Self-validating filtering logic with comprehensive test suite
+### 🤖 AI-Enhanced Processing
+- **GPT 4.1 Integration**: Azure OpenAI for intelligent budget analysis
+- **Original Headers**: Preserves exact headers from source documents
+- **Smart Formatting**: Automatic bold headers and totals
+- **Context Analysis**: Uses document context for better understanding
 
-### Traditional Table Extraction
-- Extract tables from PDF files using Azure Document Intelligence
-- Filter tables containing monetary values (amounts, prices, totals, etc.)
-- View extracted tables in the browser
-- Download results as CSV or JSON
+### 🧠 AI Budget Summary (NEW)
+- **Always-On Analysis**: Every document gets an AI-powered budget summary using GPT 4.1
+- **Budget-Focused**: Specifically analyzes content for financial, monetary, and budget information
+- **Intelligent Insights**: Provides 2-3 line summaries highlighting budget relevance
+- **No More Errors**: Replaces generic error messages with meaningful budget analysis
+- **Prominent Display**: Summary appears first, before any table processing
 
-### Advanced Budget & Label Extraction
-- 🆕 **Extract budget data from PDFs, Excel files, and images**
-- 🆕 **Standardized 3-column output**: Label1, Label2, Budget_Amount
-- 🆕 **Intelligent text parsing**: Extracts amounts even from unstructured text
-- 🆕 **Multi-format support**: PDF tables, Excel sheets, image OCR
-- 🆕 **Smart amount detection**: Recognizes various currency formats ($, €, £, ₹, etc.)
-- 🆕 **Highest budget highlighting**: Automatically identifies highest budget entries
-- 🆕 **Batch processing**: Process all files in blob storage at once
+### 📊 Multi-Sheet Excel Support
+- **Individual Processing**: Each Excel sheet processed separately
+- **Original Headers**: Preserves Excel column names exactly
+- **Sheet Identification**: Clear tracking of source sheet names
+- **Flexible Export**: Download individual sheets or combined files
 
-## Core Architecture
-
-### `table_extractor.py` - Main Module 🎯
-The heart of the application - a comprehensive, self-contained module that:
-
-- **Multi-format processing**: PDF, Excel (.xlsx, .xls), and Images (.jpg, .png, .tiff, .bmp)
-- **Azure Document Intelligence integration**: Uses prebuilt-layout model for OCR
-- **Smart filtering**: Automatically ignores tables without monetary values
-- **Built-in validation**: Run `python table_extractor.py` to test filtering logic
-- **Dual usage**: Import as module or run standalone for testing
-
-#### Filtering Logic Examples:
-✅ **Tables KEPT:**
-- Product pricing: `$1,200.00`, `€150`, `₹2,500`
-- Budget sheets: Headers with "Budget Amount", "Cost", "Price"
-- Financial data: Any currency symbols or amount keywords
-
-❌ **Tables FILTERED OUT:**
-- Employee directories: Names, departments, locations
-- Project status: Project names, completion status
-- General information: Non-financial text data
-
-### Usage Examples:
-
-**As Python Module:**
-```python
-from table_extractor import TableExtractor
-extractor = TableExtractor.get_extractor()
-tables = extractor.process_file(file_bytes, ".pdf")  # Only money tables
-```
-
-**As Standalone Test:**
-```bash
-python table_extractor.py  # Runs comprehensive test suite
-```
+### 💾 Comprehensive Export Options
+- **CSV**: Individual sheets and combined files
+- **Excel**: Bold headers with individual sheet tabs
+- **JSON**: Structured data for API integration
+- **Original Headers**: All exports preserve source document headers
 
 ---
 
 ## Supported File Types
 
-- **PDF files**: Tables and text-based budget information
-- **Excel files** (.xlsx, .xls): All sheets processed automatically  
-- **Image files** (.jpg, .jpeg, .png, .tiff, .bmp): OCR-based extraction
-- **Text formats**: Recognizes budget amounts in plain text
+| Format | Processor | Processing Method | Headers Source |
+|--------|-----------|------------------|----------------|
+| **PDF** | PDF/Image Extractor | Document Intelligence OCR | Original document tables |
+| **Images** | PDF/Image Extractor | Document Intelligence OCR | Original image tables |
+| **Excel (.xlsx/.xls)** | Excel Extractor | Direct sheet reading | Excel column headers |
 
 ---
 
 ## Requirements
 
 - Python 3.8+
-- Azure Document Intelligence (Form Recognizer) resource
+- Azure Document Intelligence resource (for PDF/Images)
 - Azure Blob Storage account
+- Azure OpenAI GPT 4.1 deployment
 - Required Python packages (see requirements.txt)
 
 Install dependencies:
-```sh
+```bash
 pip install -r requirements.txt
 ```
-
-### Key Dependencies Added:
-- `filetype>=1.2.0` - Image format detection
-- `regex>=2023.0.0` - Advanced currency pattern matching
-- `azure-ai-documentintelligence>=1.0.0` - OCR capabilities
 
 ---
 
@@ -101,7 +143,7 @@ pip install -r requirements.txt
 1. **Clone or download this repository.**
 
 2. **Create a `.env` file in the project directory:**
-   ```
+   ```bash
    # Azure Document Intelligence Configuration
    DOC_INTELLIGENCE_ENDPOINT=https://your-document-intelligence-resource.cognitiveservices.azure.com/
    DOC_INTELLIGENCE_KEY=your-document-intelligence-key-here
@@ -109,160 +151,117 @@ pip install -r requirements.txt
    # Azure Blob Storage Configuration  
    AZURE_BLOB_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=your-storage-account;AccountKey=your-account-key;EndpointSuffix=core.windows.net
    AZURE_BLOB_CONTAINER=your-container-name
+
+   # Azure OpenAI GPT 4.1 Configuration
+   AZURE_OPENAI_ENDPOINT=https://your-openai-resource.openai.azure.com/
+   AZURE_OPENAI_API_KEY=your-openai-key-here
+   AZURE_OPENAI_API_VERSION=2025-01-01-preview
+   AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
    ```
 
 3. **Upload files to Azure Blob Storage:**
    - Upload your PDF, Excel, or image files to the specified blob container
 
-4. **Test the filtering system (Optional):**
-   ```sh
-   python table_extractor.py
+4. **Run Trinity Online:**
+   ```bash
+   python -m streamlit run main.py
    ```
-   This will run the built-in test suite to verify money-based filtering is working correctly.
 
-5. **Run the main app:**
-   ```sh
+   or
+
+   ```bash
    streamlit run main.py
    ```
 
----
-
-## Usage
-
-### Budget Extraction Mode
-
-1. **Select "Budget Extraction" or "Both"** from the processing mode options
-2. **Choose a file** from your blob storage or process all files
-3. **View results** in standardized 3-column format:
-   - **Label1**: Primary label/description
-   - **Label2**: Secondary label/category  
-   - **Budget_Amount**: Extracted monetary amount
-
-### Key Features of Budget Extraction
-
-- **Smart Currency Detection**: Recognizes $, €, £, ₹, USD, EUR, GBP, INR, etc.
-- **Text Format Support**: Extracts amounts like "5,000", "$25,000", "Rs. 150,000"
-- **Abbreviated Amounts**: Handles "25K", "1.5M", "2B" formats
-- **Highest Budget Identification**: Automatically highlights the largest amount
-- **Multi-source Processing**: Combines data from tables, text, and multiple files
-
-### Example Output
-
-| Label1 | Label2 | Budget_Amount |
-|--------|--------|---------------|
-| Marketing | Q4 Campaign | 25000.00 |
-| Equipment | New Laptops | 150000.00 |
-| Training | Employee Development | 8750.00 |
-
-## Recent Updates & Changes
-
-### 🆕 Version 2.0 - Smart Money-Based Filtering (August 2025)
-
-#### Major Changes:
-- **Integrated Architecture**: Merged test suite into `table_extractor.py` for a single, comprehensive main file
-- **Smart Filtering**: Automatic detection and filtering of tables without monetary values
-- **Enhanced Currency Support**: Expanded recognition for global currencies (₹, €, £, $, etc.)
-- **Self-Testing Module**: Built-in validation with 5 comprehensive test scenarios
-- **Improved Performance**: Reduced processing overhead by filtering irrelevant tables early
-
-#### Files Updated:
-- ✅ **`table_extractor.py`**: Now the complete main module with integrated testing
-- ✅ **`requirements.txt`**: Added `filetype>=1.2.0` dependency
-- ✅ **`utils/currency_utils.py`**: Enhanced currency detection patterns
-- ❌ **Removed**: Separate test files (integrated into main module)
-
-#### Filtering Performance:
-- **Test Results**: 5 tables → 3 relevant tables (60% efficiency improvement)
-- **Accuracy**: 100% detection of financial vs non-financial tables
-- **Coverage**: Supports currency symbols, keywords, and numeric patterns
-
-### Legacy Budget & Label Extraction
-- `budget_extractor.py`: Core budget extraction logic  
-- Standardized 3-column output format
-- Multi-source data combination
-
----
-
-## New Files Added
-
-- ✅ **`table_extractor.py`**: Complete main module (includes testing)
-- ✅ **`utils/currency_utils.py`**: Currency detection utilities
-- ✅ **`budget_extractor.py`**: Budget-specific extraction logic
-- ✅ **`.env.template`**: Environment configuration template
-- ✅ **`FILTERING_CHANGES.md`**: Detailed technical documentation
+5. **Access the application:**
+   - Open your browser to `http://localhost:8501`
+   - The Trinity Online interface will be available
 
 ---
 
 ## Usage
 
-### Quick Start Guide
+### Trinity Online Interface
 
-1. **Run the test suite first:**
-   ```sh
-   python table_extractor.py
-   ```
-   This validates that the money-based filtering is working correctly.
+1. **Select a file** from your Azure Blob Storage using the dropdown
+2. **Click "Process Selected File"** to start the Trinity workflow
+3. **Monitor progress** through the 5-step process:
+   - File download from blob storage
+   - Document Intelligence processing
+   - AI budget analysis with GPT 4.1
+   - Data formatting and cleanup
+   - Final result preparation
+4. **View results** in the standardized table format
+5. **Download** your data as CSV or Excel file
 
-2. **Start the web application:**
-   ```sh
-   streamlit run main.py  
-   ```
+### Output Format
 
-3. **Open the app in your browser** (Streamlit will show the URL).
+The AI system produces clean, standardized budget data:
 
-### Table Extraction Mode
+```
+Label                          Description                      Amount
+Salary            Annual salary for Q4 2024                 45000.0
+Marketing         Digital advertising for Q4 2024          15000.0
+Travel            Business trips during Q4 2024             8750.0
+Benefits          Health insurance for staff                12000.0
+Equipment         Laptops and monitors for office use       8500.0
+Office Supplies   Stationery and materials for Q4 2024      2500.0
+**TOTAL**         Total budget allocation for Q4 2024      91750.0
+```
 
-1. **Select "Table Extraction" or "Both"** from the processing mode options
-2. **Choose a file** from your blob storage or process all files  
-3. **View filtered results** - only tables with monetary data are shown
-4. **Download results** as CSV or JSON
-
-### Budget Extraction Mode
-
----
-
-## Notes
-
-- **Smart Filtering**: The app automatically uses the **prebuilt-layout** model and filters out non-financial tables
-- **Money-Only Focus**: Only tables containing monetary values (amount, price, total, etc.) are processed and shown
-- **Global Currency Support**: Recognizes $, €, £, ₹, USD, EUR, GBP, INR and many more
-- **Self-Validating**: Built-in test suite ensures filtering accuracy
-- **Azure Integration**: Requires active Azure Document Intelligence resource
-
-## Performance Benefits
-
-- **60% Faster Processing**: By filtering out irrelevant tables early in the pipeline
-- **Higher Accuracy**: Focus on financial data reduces false positives  
-- **Reduced Noise**: No more employee lists, project status tables, or general information
-- **Automatic Quality Control**: Built-in validation ensures consistent results
+### Key Features
+- **Smart Currency Detection**: Recognizes various currency formats
+- **Intelligent Totaling**: Automatically calculates and highlights totals
+- **Context Integration**: Uses document text for better understanding
+- **Professional Formatting**: Bold headers and total rows
 
 ---
 
 ## Troubleshooting
 
-- **Missing endpoint or key:**  
-  Make sure your `.env` file is present and contains the correct values.
+### Common Issues
 
-- **No tables found:**  
-  The PDF may not contain tables with monetary values recognizable by the filtering system.
+**Application failed to start:**
+- Check that all Azure services are properly configured in `.env`
+- Ensure Azure Document Intelligence and OpenAI endpoints are correct
+- Verify API keys are valid and not expired
 
-- **Testing the filtering:**
-  Run `python table_extractor.py` to verify the money-detection logic is working properly.
+**No files found in blob storage:**
+- Confirm blob storage connection string is correct
+- Check that files are uploaded to the specified container
+- Verify container name matches the configuration
 
-- **Azure errors:**  
-  Check your Azure subscription, endpoint, and key.
+**AI processing errors:**
+- Ensure GPT 4.1 deployment is active and accessible
+- Check Azure OpenAI API key and endpoint
+- Verify API version is supported (2025-01-01-preview)
 
-- **Import errors:**
-  Ensure all dependencies are installed: `pip install -r requirements.txt`
+**Document processing failures:**
+- Confirm Document Intelligence service is running
+- Check file format is supported (PDF, Excel, Images)
+- Verify endpoint and key are correctly configured
+
+### Testing Commands
+
+**Test imports:**
+```bash
+python -c "import ui_app; print('Trinity UI App imported successfully!')"
+```
+
+**Run Trinity Online:**
+```bash
+python -m streamlit run main.py
+```
 
 ---
 
-## Technical Documentation
+## Technical Notes
 
-For detailed technical information about the filtering system, see:
-- **`FILTERING_CHANGES.md`** - Complete technical documentation
-- **`table_extractor.py`** - Run directly to see filtering examples
-- **`utils/currency_utils.py`** - Currency detection patterns and logic
+- **AI Processing**: Works on structured Document Intelligence data, not raw files
+- **Fallback Support**: Automatic fallback to standard extraction if AI fails  
+- **Multi-format Support**: PDF, Excel (.xlsx, .xls), Images (.jpg, .png, .tiff, .bmp)
+- **Professional Output**: Clean 3-column format with bold totals and headers
+- **Real-time Processing**: Live progress indicators during workflow execution
 
 ---
 
@@ -274,5 +273,6 @@ This project is for demonstration and educational purposes.
 
 ## Credits
 
-- [Azure Document Intelligence (Form Recognizer)](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/)
--
+- [Azure Document Intelligence](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/)
+- [Azure OpenAI Service](https://learn.microsoft.com/en-us/azure/ai-services/openai/)
+- [Streamlit](https://streamlit.io/) - Web application framework
