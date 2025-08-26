@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-from table_utils import BlobManager, TableExtractor, read_csv_or_excel_file
+from utils.currency_utils import contains_money
 
 def initialize_app():
     st.set_page_config(page_title="Budget Table Extractor", layout="wide")
@@ -103,220 +103,131 @@ def contains_money(df):
             return True
     return False
 
+def display_extraction_results(result):
+    """Display the results from table extraction."""
+    if not result['success']:
+        st.error(f"❌ Error processing file: {result.get('error', 'Unknown error')}")
+        return
+    
+    # Display budget extraction results first if available
+    budget_data = result.get('budget_data')
+    if budget_data is not None and not budget_data.empty:
+        st.subheader("💰 Extracted Budget Data")
+        st.dataframe(budget_data, use_container_width=True)
+        add_download_buttons(budget_data, "Budget_Data")
+        st.divider()
+    
+    # Display tables
+    tables_to_display = result.get('budget_tables', []) if result.get('budget_tables') else result.get('tables', [])
+    
+    if not tables_to_display:
+        if budget_data is not None and not budget_data.empty:
+            st.info("ℹ️ Budget data was extracted but no raw tables are available for display.")
+        else:
+            st.warning("⚠️ No tables found in the processed file.")
+        return
+    
+    # For Excel files with sheet information
+    if result.get('file_type') == 'excel_csv' and result.get('budget_tables_with_names'):
+        display_excel_results(result)
+    else:
+        display_pdf_image_results(tables_to_display)
+
+
+def display_excel_results(result):
+    """Display results for Excel/CSV files with sheet information."""
+    budget_tables_with_names = result.get('budget_tables_with_names', [])
+    
+    if not budget_tables_with_names:
+        st.warning("⚠️ No budget-related tables found in Excel file.")
+        return
+    
+    all_cleaned_tables = []
+    
+    for i, (sheet_name, df) in enumerate(budget_tables_with_names, start=1):
+        if df.empty:
+            st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
+            continue
+        
+        # Clean and preprocess the DataFrame
+        df = preprocess_dataframe(df)
+        all_cleaned_tables.append(df)
+        
+        st.subheader(f"📊 Sheet: {sheet_name}")
+        st.dataframe(df, use_container_width=True)
+        
+        # Add download buttons
+        add_download_buttons(df, f"Sheet_{sheet_name}", index=i)
+    
+    # Combined download option
+    if len(all_cleaned_tables) > 1:
+        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
+        st.subheader("📊 Combined Data")
+        add_download_buttons(combined_df, "All_Sheets")
+
+
+def display_pdf_image_results(tables):
+    """Display results for PDF/Image files."""
+    all_cleaned_tables = []
+    
+    for i, df in enumerate(tables, start=1):
+        if df.empty:
+            continue
+        
+        # Clean and preprocess the DataFrame
+        df = preprocess_dataframe(df)
+        all_cleaned_tables.append(df)
+        
+        st.subheader(f"📊 Table {i}")
+        st.dataframe(df, use_container_width=True)
+        
+        # Add download buttons
+        add_download_buttons(df, f"Table", index=i)
+    
+    # Combined download option
+    if len(all_cleaned_tables) > 1:
+        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
+        st.subheader("📊 Combined Data")
+        add_download_buttons(combined_df, "All_Tables")
+
+
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
-    # Inject custom CSS for table styling
-    try:
-        with open("styles.css") as f:
-            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-    except Exception:
-        pass
-    if "processed_file" not in st.session_state or st.session_state["processed_file"] != selected_blob_file:
-        st.session_state["processed_file"] = selected_blob_file
-        st.session_state["filtered_tables"] = []
-        st.session_state["excel_sheets"] = {}
-        st.session_state["processed"] = False
-
+    """Legacy function - kept for backward compatibility but deprecated."""
+    st.warning("⚠️ This function is deprecated. Please use the new orchestrator in main.py")
+    
+    # Basic file processing without the full orchestrator
     ext = os.path.splitext(selected_blob_file)[1].lower()
-
-
-
-
-    def reset_processed():
-        st.session_state["processed"] = False
-        st.session_state["filtered_tables"] = []
-        st.session_state["excel_sheets"] = {}
-
-    extraction_mode = st.radio(
-        "Extraction Mode",
-        ["Table Extraction", "Budget Extraction"],
-        index=0,
-        on_change=reset_processed
-    )
-    budget_extraction = extraction_mode == "Budget Extraction"
-
-    if st.button("Extract table from Files") and not st.session_state["processed"]:
+    
+    if st.button("Extract Tables"):
         try:
             blob_bytes = blob_manager.download_file(selected_blob_file)
-
-            # Debugging and validation for extracted tables
+            
+            # Simple processing based on file type
             if ext == ".pdf":
                 tables = extractor.extract_from_pdf(blob_bytes)
-                for i, table in enumerate(tables):
-                    if not isinstance(table, pd.DataFrame):
-                        continue
-
-                    if table.empty:
-                        continue
-
-                    try:
-                        # Preprocess the DataFrame
-                        table = preprocess_dataframe(table)
-
-                        # Filter tables to include only budget-related ones
-                        if not contains_money(table):
-                            continue
-
-                        table = standardize_dataframe(table)
-                        # If budget extraction is enabled, filter columns
-                        if budget_extraction:
-                            # Find description/related column
-                            desc_col = None
-                            for col in table.columns:
-                                if any(x in col.lower() for x in ["desc", "item", "purpose", "details", "name"]):
-                                    desc_col = col
-                                    break
-                            # Find highest budget column
-                            import numpy as np
-                            budget_cols = [col for col in table.columns if any(x in col.lower() for x in ["budget", "amount", "cost", "price", "total", "$", "inr", "usd", "eur", "gbp", "aud", "cad", "₹", "€", "£"])]
-                            highest_col = None
-                            max_sum = -np.inf
-                            max_count = -1
-                            for col in budget_cols:
-                                try:
-                                    vals = pd.to_numeric(table[col].astype(str).str.replace(",", "").str.extract(r"([\d.]+)")[0], errors="coerce")
-                                    col_sum = vals.sum()
-                                    col_count = vals.notnull().sum()
-                                    if col_sum > max_sum:
-                                        max_sum = col_sum
-                                        max_count = col_count
-                                        highest_col = col
-                                    elif col_sum == max_sum:
-                                        if col_count > max_count:
-                                            max_count = col_count
-                                            highest_col = col
-                                except Exception:
-                                    continue
-                            show_cols = []
-                            if desc_col:
-                                show_cols.append(desc_col)
-                            if highest_col:
-                                show_cols.append(highest_col)
-                            if show_cols:
-                                table = table[show_cols]
-                        st.session_state["filtered_tables"].append(table)
-                    except Exception as e:
-                        st.error(f"Error processing table {i+1}: {e}")
-
-                if not st.session_state["filtered_tables"]:
-                    st.warning("⚠️ No valid budget-related tables found in the selected PDF file.")
-
+                display_simple_tables(tables, "PDF")
             elif ext in [".xlsx", ".xls"]:
-                _, _, _, sheets = read_csv_or_excel_file(blob_bytes, selected_blob_file)
-                st.session_state["excel_sheets"] = {sheet_name: standardize_dataframe(sheet_df) for sheet_name, sheet_df in sheets.items()}
-                st.session_state["filtered_tables"] = {}
-
-                if not sheets:
-                    st.warning("⚠️ No sheets found in the Excel file.")
-
+                # This would need the Excel processor
+                st.error("Excel processing requires the new orchestrator. Please use main.py with --mode web")
             elif ext in [".png", ".jpg", ".jpeg", ".tiff"]:
                 tables = extractor.extract_from_image(blob_bytes)
-                st.session_state["filtered_tables"] = []
-                for i, table in enumerate(tables):
-                    if not isinstance(table, pd.DataFrame):
-                        continue
-                    if table.empty:
-                        continue
-                    try:
-                        table = preprocess_dataframe(table)
-                        if not contains_money(table):
-                            continue
-                        table = standardize_dataframe(table)
-                        # If budget extraction is enabled, filter columns
-                        if budget_extraction:
-                            # Find description/related column
-                            desc_col = None
-                            for col in table.columns:
-                                if any(x in col.lower() for x in ["desc", "item", "purpose", "details", "name"]):
-                                    desc_col = col
-                                    break
-                            # Find highest budget column
-                            import numpy as np
-                            budget_cols = [col for col in table.columns if any(x in col.lower() for x in ["budget", "amount", "cost", "price", "total", "$", "inr", "usd", "eur", "gbp", "aud", "cad", "₹", "€", "£"])]
-                            highest_col = None
-                            max_sum = -np.inf
-                            for col in budget_cols:
-                                try:
-                                    vals = pd.to_numeric(table[col].astype(str).str.replace(",", "").str.extract(r"([\d.]+)")[0], errors="coerce")
-                                    col_sum = vals.sum()
-                                    if col_sum > max_sum:
-                                        max_sum = col_sum
-                                        highest_col = col
-                                except Exception:
-                                    continue
-                            show_cols = []
-                            if desc_col:
-                                show_cols.append(desc_col)
-                            if highest_col:
-                                show_cols.append(highest_col)
-                            if show_cols:
-                                table = table[show_cols]
-                        st.session_state["filtered_tables"].append(table)
-                    except Exception as e:
-                        st.error(f"Error processing table {i+1}: {e}")
-
-                if not st.session_state["filtered_tables"]:
-                    st.warning("⚠️ No valid budget-related tables found in the selected image file.")
-                else:
-                    # 👉 Add your block here:
-                    all_cleaned_tables = []
-                    for i, df in enumerate(st.session_state["filtered_tables"], start=1):
-                        df = standardize_dataframe(extractor.clean_table(df).fillna(""))
-                        df.columns = deduplicate_columns(df.columns)
-                        all_cleaned_tables.append(df)
-
-                        st.subheader(f"📊 Table {i}")
-                        st.dataframe(df)
-
-                        download_table_as_json(df, i)
-
-                    combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-                    add_download_buttons(combined_df, label_prefix="All_Tables")
+                display_simple_tables(tables, "Image")
             else:
-                st.info("Unsupported file format. Please select a PDF, Excel, or image file.")
-                st.session_state["filtered_tables"] = []
-                st.session_state["excel_sheets"] = {}
-
-            st.session_state["processed"] = True
-
+                st.error("Unsupported file format")
+                
         except Exception as e:
             st.error(f"❌ Error processing file: {e}")
 
-    if ext == ".pdf" and st.session_state.get("filtered_tables"):
-        all_cleaned_tables = []
-        for i, df in enumerate(st.session_state["filtered_tables"], start=1):
-            # Only clean and deduplicate columns that remain after budget extraction
-            df = extractor.clean_table(df).fillna("")
-            df = standardize_dataframe(df)
-            df.columns = deduplicate_columns(df.columns)
-            all_cleaned_tables.append(df)
 
+def display_simple_tables(tables, file_type):
+    """Display simple table results."""
+    if not tables:
+        st.warning(f"⚠️ No tables found in the {file_type} file.")
+        return
+    
+    for i, table in enumerate(tables, start=1):
+        if isinstance(table, pd.DataFrame) and not table.empty:
+            table = preprocess_dataframe(table)
             st.subheader(f"📊 Table {i}")
-            # Render table as HTML so CSS applies (headers bold)
-            st.markdown(df.to_html(index=False, escape=False), unsafe_allow_html=True)
-            download_table_as_json(df, i)
-
-        if all_cleaned_tables:
-            combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-            add_download_buttons(combined_df, label_prefix="All_Tables")
-
-    if ext in [".xlsx", ".xls"] and st.session_state.get("excel_sheets"):
-        sheets = st.session_state["excel_sheets"]
-        all_cleaned_tables = []
-        for i, (sheet_name, sheet_df) in enumerate(sheets.items(), start=1):
-            sheet_df = standardize_dataframe(sheet_df)
-            if sheet_df.empty:
-                st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
-                continue
-
-            sheet_df.columns = deduplicate_columns(sheet_df.columns)
-            all_cleaned_tables.append(sheet_df)
-
-            st.subheader(f"📊 Sheet: {sheet_name}")
-            st.dataframe(sheet_df, use_container_width=True)
-
-            download_table_as_json(sheet_df, i)
-
-        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-        add_download_buttons(combined_df, label_prefix="All_Sheets")
-
-    return ext
+            st.dataframe(table, use_container_width=True)
+            add_download_buttons(table, f"Table", index=i)
