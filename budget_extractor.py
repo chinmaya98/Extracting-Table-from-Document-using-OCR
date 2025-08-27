@@ -79,15 +79,46 @@ class BudgetExtractor:
         best_money_col = self._select_best_money_column(df, money_columns)
         
         # Select the best label column (highest non-null count, preferably text)
-        best_label_col = max(label_columns, key=lambda col: df[col].notna().sum())
+        if len(label_columns) == 1:
+            best_label_col = label_columns[0]
+        else:
+            # Calculate non-null counts for each label column
+            label_scores = []
+            for col in label_columns:
+                # Handle both single and multi-index columns
+                col_data = df[col]
+                if hasattr(col_data, 'shape') and len(col_data.shape) > 1:
+                    # Multi-column selection, take the first column
+                    count = col_data.iloc[:, 0].notna().sum()
+                else:
+                    count = col_data.notna().sum()
+                
+                # Ensure we get a scalar value
+                if hasattr(count, 'iloc'):
+                    count = count.iloc[0] if count.size > 0 else 0
+                elif hasattr(count, 'item'):
+                    count = count.item() if count.size == 1 else count.sum()
+                
+                label_scores.append((col, count))
+            
+            best_label_col = max(label_scores, key=lambda x: x[1])[0]
         
         # Identify total rows to ensure they're included
         total_rows = self._identify_total_rows(df, best_money_col)
         
         # Create budget DataFrame
         budget_df = pd.DataFrame()
-        budget_df['Description'] = df[best_label_col].astype(str)
-        budget_df['Budget'] = df[best_money_col]
+        
+        # Handle potential multi-column selections
+        label_data = df[best_label_col]
+        if hasattr(label_data, 'shape') and len(label_data.shape) > 1:
+            label_data = label_data.iloc[:, 0]  # Take first column
+        budget_df['Description'] = label_data.astype(str)
+        
+        money_data = df[best_money_col]
+        if hasattr(money_data, 'shape') and len(money_data.shape) > 1:
+            money_data = money_data.iloc[:, 0]  # Take first column
+        budget_df['Budget'] = money_data
         
         # Mark total rows for special handling
         budget_df['_is_total'] = False
@@ -125,7 +156,13 @@ class BudgetExtractor:
             score = 0
             
             # Base score: non-null count
-            score += df[col].notna().sum()
+            notna_count = df[col].notna().sum()
+            # Handle potential Series result from MultiIndex
+            if hasattr(notna_count, 'iloc'):
+                notna_count = notna_count.iloc[0] if notna_count.size > 0 else 0
+            elif hasattr(notna_count, 'item'):
+                notna_count = notna_count.item() if notna_count.size == 1 else notna_count.sum()
+            score += notna_count
             
             # Bonus for having total-like values
             total_rows = self._identify_total_rows(df, col)
@@ -300,8 +337,8 @@ class BudgetExtractor:
             return budget_df
         
         # Separate totals from regular data
-        total_rows = budget_df[budget_df['_is_total'] == True].copy()
-        regular_rows = budget_df[budget_df['_is_total'] == False].copy()
+        total_rows = budget_df[budget_df['_is_total']].copy()
+        regular_rows = budget_df[~budget_df['_is_total']].copy()
         
         # Clean regular rows
         if not regular_rows.empty:
@@ -450,7 +487,7 @@ class BudgetExtractor:
         
         # Identify potential total rows based on description content
         total_mask = combined_budget['Description'].str.lower().str.contains(
-            r'\b(total|sum|subtotal|grand total|net total|overall|summary)\b', 
+            r'\b(?:total|sum|subtotal|grand total|net total|overall|summary)\b', 
             regex=True, na=False
         )
         
@@ -473,7 +510,7 @@ class BudgetExtractor:
             
             # Sort so that totals appear at the bottom
             total_mask_final = final_result['Description'].str.lower().str.contains(
-                r'\b(total|sum|subtotal|grand total|net total|overall|summary)\b', 
+                r'\b(?:total|sum|subtotal|grand total|net total|overall|summary)\b', 
                 regex=True, na=False
             )
             

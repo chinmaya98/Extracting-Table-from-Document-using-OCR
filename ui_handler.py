@@ -96,27 +96,21 @@ def preprocess_dataframe(df):
     df = standardize_dataframe(df)
     return df
 
-def contains_money(df):
-    """Check if the DataFrame contains any budget-related data, such as monetary values."""
-    for col in df.select_dtypes(include=['float64', 'int64', 'object']):
-        if df[col].apply(lambda x: isinstance(x, (int, float)) or (isinstance(x, str) and re.search(r'\$|€|£|¥', x))).any():
-            return True
-    return False
-
 def display_extraction_results(result):
     """Display the results from table extraction."""
     if not result['success']:
         st.error(f"❌ Error processing file: {result.get('error', 'Unknown error')}")
         return
     
-    # Display budget extraction results first if available
+    # Display budget extraction results first if available (HIDDEN)
     budget_data = result.get('budget_data')
     if budget_data is not None and not budget_data.empty:
-        st.subheader("💰 Extracted Budget Data")
-        st.dataframe(budget_data, use_container_width=True)
-        add_download_buttons(budget_data, "Budget_Data")
-        st.divider()
-        st.title("TABLE EXTRACTION")
+        # st.subheader("💰 Extracted Budget Data")
+        # st.dataframe(budget_data, use_container_width=True)
+        # add_download_buttons(budget_data, "Budget_Data")
+        # st.divider()
+        # st.title("TABLE EXTRACTION")
+        pass  # Budget data processing continues but display is hidden
     
     # Display tables
     tables_to_display = result.get('budget_tables', []) if result.get('budget_tables') else result.get('tables', [])
@@ -144,10 +138,10 @@ def display_excel_results(result):
         st.warning("⚠️ No tables found in Excel file.")
         return
     
-    # Display budget sheets first
+    # Display budget sheets first (HEADERS HIDDEN)
     if budget_tables_with_names:
-        st.subheader("💰 Budget Sheets")
-        st.success(f"✅ Found budget data in {len(budget_tables_with_names)} sheet(s)")
+        # st.subheader("💰 Budget Sheets")
+        # st.success(f"✅ Found budget data in {len(budget_tables_with_names)} sheet(s)")
         
         all_cleaned_budget_tables = []
         
@@ -217,17 +211,17 @@ def display_excel_results(result):
                             key=f"csv_sheet_{sheet_name}"
                         )
         
-        # Show summary statistics
-        st.subheader("📊 Excel File Summary")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Sheets", len(all_sheets))
-        with col2:
-            budget_count = len(budget_tables_with_names) if budget_tables_with_names else 0
-            st.metric("Budget Sheets", budget_count)
-        with col3:
-            other_count = len(all_sheets) - budget_count
-            st.metric("Other Sheets", other_count)
+        # Show summary statistics (HIDDEN)
+        # st.subheader("📊 Excel File Summary")
+        # col1, col2, col3 = st.columns(3)
+        # with col1:
+        #     st.metric("Total Sheets", len(all_sheets))
+        # with col2:
+        #     budget_count = len(budget_tables_with_names) if budget_tables_with_names else 0
+        #     st.metric("Budget Sheets", budget_count)
+        # with col3:
+        #     other_count = len(all_sheets) - budget_count
+        #     st.metric("Other Sheets", other_count)
 
 
 def display_pdf_image_results(tables):

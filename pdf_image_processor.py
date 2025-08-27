@@ -207,7 +207,10 @@ class PDFImageProcessor:
             return df
         
         # Remove completely empty rows
-        df_cleaned = df[~df.apply(lambda row: row.astype(str).str.strip().eq('').all(), axis=1)]
+        def is_empty_row(row):
+            return all(str(val).strip() == '' for val in row)
+        
+        df_cleaned = df[~df.apply(is_empty_row, axis=1)]
         
         # Reset index
         df_cleaned = df_cleaned.reset_index(drop=True)
