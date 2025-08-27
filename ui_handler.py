@@ -6,7 +6,7 @@ from utils.currency_utils import contains_money
 
 def initialize_app():
     st.set_page_config(page_title="Budget Table Extractor", layout="wide")
-    st.title("📄 Budget Table Extractor")
+    st.title("Budget Table Extractor")
 
 def handle_blob_interaction(blob_manager):
     blob_files = []
@@ -116,6 +116,7 @@ def display_extraction_results(result):
         st.dataframe(budget_data, use_container_width=True)
         add_download_buttons(budget_data, "Budget_Data")
         st.divider()
+        st.title("TABLE EXTRACTION")
     
     # Display tables
     tables_to_display = result.get('budget_tables', []) if result.get('budget_tables') else result.get('tables', [])
@@ -137,33 +138,96 @@ def display_extraction_results(result):
 def display_excel_results(result):
     """Display results for Excel/CSV files with sheet information."""
     budget_tables_with_names = result.get('budget_tables_with_names', [])
+    all_sheets = result.get('sheets', {})
     
-    if not budget_tables_with_names:
-        st.warning("⚠️ No budget-related tables found in Excel file.")
+    if not budget_tables_with_names and not all_sheets:
+        st.warning("⚠️ No tables found in Excel file.")
         return
     
-    all_cleaned_tables = []
+    # Display budget sheets first
+    if budget_tables_with_names:
+        st.subheader("💰 Budget Sheets")
+        st.success(f"✅ Found budget data in {len(budget_tables_with_names)} sheet(s)")
+        
+        all_cleaned_budget_tables = []
+        
+        for i, (sheet_name, df) in enumerate(budget_tables_with_names, start=1):
+            if df.empty:
+                st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
+                continue
+            
+            # Clean and preprocess the DataFrame
+            df = preprocess_dataframe(df)
+            all_cleaned_budget_tables.append(df)
+            
+            with st.expander(f"� Budget Sheet: {sheet_name} ({len(df)} rows)", expanded=True):
+                st.dataframe(df, use_container_width=True)
+                
+                # Sheet-specific download buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    csv_data = df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        f"⬇️ Download '{sheet_name}' as CSV",
+                        data=csv_data,
+                        file_name=f"budget_{sheet_name.replace(' ', '_')}.csv",
+                        mime="text/csv",
+                        key=f"csv_budget_{i}"
+                    )
+                with col2:
+                    json_data = df.to_json(orient='records', indent=2).encode('utf-8')
+                    st.download_button(
+                        f"⬇️ Download '{sheet_name}' as JSON",
+                        data=json_data,
+                        file_name=f"budget_{sheet_name.replace(' ', '_')}.json",
+                        mime="application/json",
+                        key=f"json_budget_{i}"
+                    )
+                
+                # Display basic stats
+                st.info(f"📊 **{sheet_name} Statistics:** {len(df)} rows × {len(df.columns)} columns")
     
-    for i, (sheet_name, df) in enumerate(budget_tables_with_names, start=1):
-        if df.empty:
-            st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
-            continue
+    # Display other sheets (non-budget ones)
+    if all_sheets:
+        budget_sheet_names = {sheet_name for sheet_name, _ in budget_tables_with_names} if budget_tables_with_names else set()
+        non_budget_sheets = {name: df for name, df in all_sheets.items() if name not in budget_sheet_names}
         
-        # Clean and preprocess the DataFrame
-        df = preprocess_dataframe(df)
-        all_cleaned_tables.append(df)
+        if non_budget_sheets:
+            with st.expander(f"� Other Sheets ({len(non_budget_sheets)} sheets)", expanded=False):
+                st.info("These sheets were processed but do not contain identifiable budget data:")
+                
+                for sheet_name, df in non_budget_sheets.items():
+                    if df.empty:
+                        st.write(f"• **{sheet_name}**: Empty sheet")
+                        continue
+                    
+                    st.write(f"• **{sheet_name}**: {len(df)} rows × {len(df.columns)} columns")
+                    
+                    # Show first few rows as preview
+                    with st.expander(f"Preview: {sheet_name}", expanded=False):
+                        st.dataframe(df.head(5), use_container_width=True)
+                        
+                        # Download button for non-budget sheets
+                        csv_data = df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            f"⬇️ Download '{sheet_name}'",
+                            data=csv_data,
+                            file_name=f"sheet_{sheet_name.replace(' ', '_')}.csv",
+                            mime="text/csv",
+                            key=f"csv_sheet_{sheet_name}"
+                        )
         
-        st.subheader(f"📊 Sheet: {sheet_name}")
-        st.dataframe(df, use_container_width=True)
-        
-        # Add download buttons
-        add_download_buttons(df, f"Sheet_{sheet_name}", index=i)
-    
-    # Combined download option
-    if len(all_cleaned_tables) > 1:
-        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-        st.subheader("📊 Combined Data")
-        add_download_buttons(combined_df, "All_Sheets")
+        # Show summary statistics
+        st.subheader("📊 Excel File Summary")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Sheets", len(all_sheets))
+        with col2:
+            budget_count = len(budget_tables_with_names) if budget_tables_with_names else 0
+            st.metric("Budget Sheets", budget_count)
+        with col3:
+            other_count = len(all_sheets) - budget_count
+            st.metric("Other Sheets", other_count)
 
 
 def display_pdf_image_results(tables):
@@ -183,12 +247,6 @@ def display_pdf_image_results(tables):
         
         # Add download buttons
         add_download_buttons(df, f"Table", index=i)
-    
-    # Combined download option
-    if len(all_cleaned_tables) > 1:
-        combined_df = pd.concat(all_cleaned_tables, ignore_index=True)
-        st.subheader("📊 Combined Data")
-        add_download_buttons(combined_df, "All_Tables")
 
 
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):

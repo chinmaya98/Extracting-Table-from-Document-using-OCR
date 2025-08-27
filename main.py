@@ -1,7 +1,18 @@
 """
 Main Table Extraction Orchestrator
-This is the main entry point for the table extraction application.
-Coordinates PDF/Image and Excel processing modules with Streamlit UI.
+
+Unified platform for extracting tabular data from multiple document formats with budget analysis.
+
+Features:
+• Multi-format Support: PDF, Images (JPG, PNG, TIFF), Excel (XLSX, XLS), CSV
+• Cloud Integration: Azure Blob Storage for file management
+• Budget Intelligence: Automatic detection and extraction of budget/financial data
+• Dual Interface: Web UI (Streamlit) and CLI for different use cases
+• Batch Processing: Bulk document processing with progress tracking
+
+Architecture: Modular design with specialized processors coordinated by TableExtractionOrchestrator
+Processing Pipeline: File Detection → Raw Extraction → Data Cleaning → Budget Analysis → Result Packaging
+Usage Modes: Web Interface (interactive) and CLI (automation/scripting)
 """
 
 import os
@@ -18,11 +29,25 @@ import ui_handler
 
 class TableExtractionOrchestrator:
     """
-    Main orchestrator that coordinates different file type processors.
+    Central coordinator for table extraction across multiple file types.
+    
+    Manages specialized processors (PDF/Image, Excel, Budget) and provides unified interface
+    for multi-format file processing, Azure Blob Storage integration, and batch operations.
+    
+    Supported formats: PDF, JPG/PNG/TIFF, Excel (XLSX/XLS), CSV
+    Key features: Automatic budget detection, error handling, metadata generation
     """
     
     def __init__(self):
-        """Initialize the orchestrator with all necessary processors."""
+        """
+        Initialize orchestrator with all processors and Azure components.
+        
+        Sets up: PDFImageProcessor (OCR), ExcelProcessor (native), BudgetExtractor,
+        BlobManager (Azure storage), and AzureConfig (credentials).
+        
+        Raises:
+            RuntimeError: If processor initialization fails (missing credentials, dependencies, etc.)
+        """
         try:
             self.pdf_image_processor = get_pdf_image_processor()
             self.excel_processor = get_excel_processor()
@@ -34,14 +59,9 @@ class TableExtractionOrchestrator:
     
     def extract_tables_from_file(self, file_bytes, filename):
         """
-        Extract tables from a file based on its extension.
+        Extract tables from file based on extension, routing to appropriate processor.
         
-        Args:
-            file_bytes: File content as bytes
-            filename: Original filename with extension
-            
-        Returns:
-            Dictionary with extraction results
+        Returns dict with extraction results including success status and table data.
         """
         try:
             # Determine file extension
@@ -59,7 +79,13 @@ class TableExtractionOrchestrator:
             raise RuntimeError(f"Failed to extract tables from '{filename}': {e}")
     
     def _process_pdf_image(self, file_bytes, file_extension, filename):
-        """Process PDF or image file."""
+        """
+        Process PDF/image files using OCR to extract tables and budget data.
+        
+        Pipeline: OCR extraction → metadata generation → budget filtering → structured data extraction
+        
+        Returns dict with: success, file_type, tables, budget_tables, budget_data, metadata
+        """
         try:
             tables = self.pdf_image_processor.process_file(file_bytes, file_extension)
             metadata = self.pdf_image_processor.get_table_metadata(tables)
@@ -95,7 +121,13 @@ class TableExtractionOrchestrator:
             }
     
     def _process_excel_csv(self, file_bytes, file_extension, filename):
-        """Process Excel or CSV file."""
+        """
+        Process Excel/CSV files to extract tables and identify budget data.
+        
+        Maintains sheet associations and returns both individual DataFrames and sheet collections.
+        
+        Returns dict with: success, file_type, tables, budget_tables, budget_data, metadata, sheets
+        """
         try:
             tables_list, sheets_dict, metadata = self.excel_processor.process_file(
                 file_bytes, file_extension, filename
@@ -140,13 +172,9 @@ class TableExtractionOrchestrator:
     
     def extract_tables_from_blob(self, blob_name):
         """
-        Extract tables from a file stored in Azure Blob Storage.
+        Extract tables from Azure Blob Storage file.
         
-        Args:
-            blob_name: Name of the blob to process
-            
-        Returns:
-            Dictionary with extraction results
+        Downloads file and processes it, adding blob-specific metadata to results.
         """
         try:
             # Download file from blob storage
@@ -174,13 +202,9 @@ class TableExtractionOrchestrator:
     
     def list_available_files(self, file_types=None):
         """
-        List available files in blob storage.
+        List available files in Azure Blob Storage with optional extension filtering.
         
-        Args:
-            file_types: List of file extensions to filter by (e.g., ['.pdf', '.xlsx'])
-            
-        Returns:
-            List of available files with metadata
+        Returns list of file info dicts with name, size, and metadata.
         """
         try:
             if file_types is None:
@@ -196,14 +220,9 @@ class TableExtractionOrchestrator:
     
     def batch_process_files(self, blob_names=None, file_types=None):
         """
-        Process multiple files in batch.
+        Process multiple files in batch with error isolation.
         
-        Args:
-            blob_names: List of specific blob names to process (optional)
-            file_types: List of file extensions to process (optional)
-            
-        Returns:
-            List of processing results
+        Auto-discovers files if not specified. Continues processing despite individual failures.
         """
         try:
             if blob_names is None:
@@ -233,13 +252,9 @@ class TableExtractionOrchestrator:
     
     def get_processing_summary(self, results):
         """
-        Generate a summary of processing results.
+        Generate statistics and analysis from batch processing results.
         
-        Args:
-            results: List of processing results
-            
-        Returns:
-            Dictionary with summary statistics
+        Returns dict with success/failure counts, table counts, file types, and errors.
         """
         summary = {
             'total_files': len(results),
@@ -279,7 +294,11 @@ class TableExtractionOrchestrator:
 
 
 def run_streamlit_app():
-    """Run the Streamlit web application."""
+    """
+    Launch the Streamlit web application for table extraction.
+    
+    Initializes orchestrator, sets up UI, handles file selection and displays results.
+    """
     try:
         # Initialize orchestrator
         orchestrator = TableExtractionOrchestrator()
@@ -291,16 +310,22 @@ def run_streamlit_app():
         selected_blob_file = ui_handler.handle_blob_interaction(orchestrator.blob_manager)
         
         if selected_blob_file:
-            # Extract and display tables through UI
-            result = orchestrator.extract_tables_from_blob(selected_blob_file)
-            ui_handler.display_extraction_results(result)
+            if st.button("RUN", key="extract_blob"):
+                with st.spinner("Processing document from blob storage..."):
+                    # Extract and display tables through UI
+                    result = orchestrator.extract_tables_from_blob(selected_blob_file)
+                    ui_handler.display_extraction_results(result)
             
     except Exception as e:
         st.error(f"Application error: {e}")
 
 
 def run_cli_mode(args):
-    """Run in command-line mode."""
+    """
+    Execute CLI operations: list files, process single file, or batch process.
+    
+    Supports file listing, individual processing, and batch operations with filtering.
+    """
     try:
         orchestrator = TableExtractionOrchestrator()
         
@@ -374,7 +399,11 @@ def run_cli_mode(args):
 
 
 def main():
-    """Main entry point for the application."""
+    """
+    Application entry point with argument parsing for web or CLI mode.
+    
+    Supports Streamlit web interface (default) or command-line operations.
+    """
     parser = argparse.ArgumentParser(description="Table Extraction Application")
     parser.add_argument('--mode', choices=['web', 'cli'], default='web',
                        help='Run mode: web (Streamlit) or cli (command line)')
