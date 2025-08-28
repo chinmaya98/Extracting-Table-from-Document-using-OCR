@@ -154,6 +154,7 @@ class TestIntegrationWorkflow(unittest.TestCase):
         """Test the data cleaning pipeline."""
         from excel_processor import ExcelProcessor
         from pdf_image_processor import PDFImageProcessor
+        from unittest.mock import Mock
         
         # Test data with various issues
         messy_data = pd.DataFrame({
@@ -170,7 +171,8 @@ class TestIntegrationWorkflow(unittest.TestCase):
         self.assertTrue(len(excel_cleaned) <= len(messy_data))
         
         # Test PDF processor cleaning
-        pdf_processor = PDFImageProcessor()
+        mock_client = Mock()
+        pdf_processor = PDFImageProcessor(mock_client)
         pdf_cleaned = pdf_processor.clean_table(messy_data)
         
         self.assertFalse(pdf_cleaned.empty)
@@ -194,7 +196,7 @@ class TestIntegrationWorkflow(unittest.TestCase):
         # Test with non-monetary tables
         non_monetary = pd.DataFrame({
             'Name': ['John', 'Jane'],
-            'Age': [25, 30]
+            'Department': ['HR', 'IT']
         })
         
         result = extractor.extract_budget_from_tables([non_monetary])

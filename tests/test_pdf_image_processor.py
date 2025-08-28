@@ -6,6 +6,7 @@ import unittest
 import pandas as pd
 import sys
 import os
+from unittest.mock import Mock
 
 # Add parent directory to path to import modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,7 +19,9 @@ class TestPDFImageProcessor(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.processor = PDFImageProcessor()
+        # Create a mock document client for testing
+        mock_client = Mock()
+        self.processor = PDFImageProcessor(mock_client)
     
     def test_clean_table_removes_empty_rows(self):
         """Test that the fixed clean_table method works properly."""
@@ -110,13 +113,15 @@ class TestPDFImageProcessor(unittest.TestCase):
         
         metadata = self.processor.get_table_metadata(tables)
         
-        self.assertIsInstance(metadata, list)
-        self.assertEqual(len(metadata), len(tables))
+        self.assertIsInstance(metadata, dict)
+        self.assertEqual(metadata['total_tables'], len(tables))
+        self.assertIn('table_info', metadata)
         
-        for meta in metadata:
+        for meta in metadata['table_info']:
             self.assertIn('rows', meta)
             self.assertIn('columns', meta)
             self.assertIn('has_monetary_data', meta)
+            self.assertIn('table_index', meta)
     
     def test_pandas_series_fix(self):
         """Test that the pandas Series boolean fix is working."""
@@ -185,7 +190,9 @@ class TestPDFImageProcessorEdgeCases(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.processor = PDFImageProcessor()
+        # Create a mock document client for testing
+        mock_client = Mock()
+        self.processor = PDFImageProcessor(mock_client)
     
     def test_single_row_dataframe(self):
         """Test processing of single-row DataFrame."""

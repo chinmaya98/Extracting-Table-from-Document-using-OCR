@@ -1,18 +1,6 @@
 """
-Main Table Extraction Orchestrator
-
-Unified platform for extracting tabular data from multiple document formats with budget analysis.
-
-Features:
-• Multi-format Support: PDF, Images (JPG, PNG, TIFF), Excel (XLSX, XLS), CSV
-• Cloud Integration: Azure Blob Storage for file management
-• Budget Intelligence: Automatic detection and extraction of budget/financial data
-• Dual Interface: Web UI (Streamlit) and CLI for different use cases
-• Batch Processing: Bulk document processing with progress tracking
-
-Architecture: Modular design with specialized processors coordinated by TableExtractionOrchestrator
-Processing Pipeline: File Detection → Raw Extraction → Data Cleaning → Budget Analysis → Result Packaging
-Usage Modes: Web Interface (interactive) and CLI (automation/scripting)
+Table Extraction Orchestrator - Multi-format document processing with budget analysis.
+Supports PDF, Images, Excel, CSV with Azure integration and Streamlit UI.
 """
 
 import os
@@ -28,26 +16,10 @@ import ui_handler
 
 
 class TableExtractionOrchestrator:
-    """
-    Central coordinator for table extraction across multiple file types.
-    
-    Manages specialized processors (PDF/Image, Excel, Budget) and provides unified interface
-    for multi-format file processing, Azure Blob Storage integration, and batch operations.
-    
-    Supported formats: PDF, JPG/PNG/TIFF, Excel (XLSX/XLS), CSV
-    Key features: Automatic budget detection, error handling, metadata generation
-    """
+    """Central coordinator for multi-format table extraction with budget analysis."""
     
     def __init__(self):
-        """
-        Initialize orchestrator with all processors and Azure components.
-        
-        Sets up: PDFImageProcessor (OCR), ExcelProcessor (native), BudgetExtractor,
-        BlobManager (Azure storage), and AzureConfig (credentials).
-        
-        Raises:
-            RuntimeError: If processor initialization fails (missing credentials, dependencies, etc.)
-        """
+        """Initialize orchestrator with all processors and Azure components."""
         try:
             self.pdf_image_processor = get_pdf_image_processor()
             self.excel_processor = get_excel_processor()
@@ -55,19 +27,13 @@ class TableExtractionOrchestrator:
             self.azure_config = get_azure_config()
             self.budget_extractor = get_budget_extractor()
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize TableExtractionOrchestrator: {e}")
+            raise RuntimeError(f"Failed to initialize orchestrator: {e}")
     
     def extract_tables_from_file(self, file_bytes, filename):
-        """
-        Extract tables from file based on extension, routing to appropriate processor.
-        
-        Returns dict with extraction results including success status and table data.
-        """
+        """Extract tables from file based on extension."""
         try:
-            # Determine file extension
             file_extension = os.path.splitext(filename)[1].lower()
             
-            # Route to appropriate processor
             if file_extension in ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif']:
                 return self._process_pdf_image(file_bytes, file_extension, filename)
             elif file_extension in ['.xlsx', '.xls', '.csv']:
@@ -121,13 +87,7 @@ class TableExtractionOrchestrator:
             }
     
     def _process_excel_csv(self, file_bytes, file_extension, filename):
-        """
-        Process Excel/CSV files to extract tables and identify budget data.
-        
-        Maintains sheet associations and returns both individual DataFrames and sheet collections.
-        
-        Returns dict with: success, file_type, tables, budget_tables, budget_data, metadata, sheets
-        """
+        """Process Excel/CSV files to extract tables and identify budget data."""
         try:
             tables_list, sheets_dict, metadata = self.excel_processor.process_file(
                 file_bytes, file_extension, filename
@@ -171,24 +131,13 @@ class TableExtractionOrchestrator:
             }
     
     def extract_tables_from_blob(self, blob_name):
-        """
-        Extract tables from Azure Blob Storage file.
-        
-        Downloads file and processes it, adding blob-specific metadata to results.
-        """
+        """Extract tables from Azure Blob Storage file."""
         try:
-            # Download file from blob storage
             file_bytes = self.blob_manager.download_file(blob_name)
-            
-            # Extract tables
             result = self.extract_tables_from_file(file_bytes, blob_name)
-            
-            # Add blob information to result
             result['source'] = 'blob_storage'
             result['blob_name'] = blob_name
-            
             return result
-            
         except Exception as e:
             return {
                 'success': False,
@@ -251,11 +200,7 @@ class TableExtractionOrchestrator:
             raise RuntimeError(f"Failed to batch process files: {e}")
     
     def get_processing_summary(self, results):
-        """
-        Generate statistics and analysis from batch processing results.
-        
-        Returns dict with success/failure counts, table counts, file types, and errors.
-        """
+        """Generate statistics from batch processing results."""
         summary = {
             'total_files': len(results),
             'successful_files': 0,
