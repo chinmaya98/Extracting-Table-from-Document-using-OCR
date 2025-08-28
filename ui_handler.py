@@ -54,12 +54,6 @@ def add_download_buttons(df: pd.DataFrame, label_prefix: str, index: int = None)
     json_data = df.to_json(orient="records", indent=2).encode("utf-8")
 
     st.download_button(
-        label=f"⬇️ Download {label_prefix}{suffix} as CSV",
-        data=csv_data,
-        file_name=f"{label_prefix.lower()}{suffix}.csv",
-        mime="text/csv"
-    )
-    st.download_button(
         label=f"⬇️ Download {label_prefix}{suffix} as JSON",
         data=json_data,
         file_name=f"{label_prefix.lower()}{suffix}.json",
@@ -158,17 +152,9 @@ def display_excel_results(result):
                 st.dataframe(df, use_container_width=True)
                 
                 # Sheet-specific download buttons
-                col1, col2 = st.columns(2)
+                col1 = st.columns(2)
+            
                 with col1:
-                    csv_data = df.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        f"⬇️ Download '{sheet_name}' as CSV",
-                        data=csv_data,
-                        file_name=f"budget_{sheet_name.replace(' ', '_')}.csv",
-                        mime="text/csv",
-                        key=f"csv_budget_{i}"
-                    )
-                with col2:
                     json_data = df.to_json(orient='records', indent=2).encode('utf-8')
                     st.download_button(
                         f"⬇️ Download '{sheet_name}' as JSON",
