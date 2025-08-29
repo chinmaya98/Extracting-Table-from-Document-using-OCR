@@ -93,92 +93,27 @@ def display_extraction_results(result):
 
 
 def display_excel_results(result):
-    """Display results for Excel/CSV files with sheet information."""
-    budget_tables_with_names = result.get('budget_tables_with_names', [])
+    """Display all Excel/CSV sheets in a collapsible expander for each sheet."""
     all_sheets = result.get('sheets', {})
-    
-    if not budget_tables_with_names and not all_sheets:
+    if not all_sheets:
         st.warning("⚠️ No tables found in Excel file.")
         return
-    
-    # Display budget sheets first (HEADERS HIDDEN)
-    if budget_tables_with_names:
-        # st.subheader("Budget Sheets")
-        # st.success(f"Found budget data in {len(budget_tables_with_names)} sheet(s)")
-        
-        all_cleaned_budget_tables = []
-        
-        for i, (sheet_name, df) in enumerate(budget_tables_with_names, start=1):
-            if df.empty:
-                st.warning(f"Sheet '{sheet_name}' is empty and will not be displayed.")
-                continue
-            
-            # Clean and preprocess the DataFrame
-            df = preprocess_dataframe(df)
-            
-            # For Streamlit display, replace NaN with empty string for better visualization
-            display_df = df.copy()
-            display_df = display_df.fillna('')
-            
-            all_cleaned_budget_tables.append(df)
-            
-            with st.expander(f"� Budget Sheet: {sheet_name} ({len(df)} rows)", expanded=True):
-                st.dataframe(display_df, use_container_width=True)
-                
-                # Sheet-specific download button (JSON only)
-                json_data = df.to_json(orient='records', indent=2).encode('utf-8')
-                st.download_button(
-                    f"⬇️ Download '{sheet_name}' as JSON",
-                    data=json_data,
-                    file_name=f"budget_{sheet_name.replace(' ', '_')}.json",
-                    mime="application/json",
-                    key=f"json_budget_{i}"
-                )
-                
-                # Display basic stats
-                st.info(f"📊 **{sheet_name} Statistics:** {len(df)} rows × {len(df.columns)} columns")
-    
-    # Display other sheets (non-budget ones)
-    if all_sheets:
-        budget_sheet_names = {sheet_name for sheet_name, _ in budget_tables_with_names} if budget_tables_with_names else set()
-        non_budget_sheets = {name: df for name, df in all_sheets.items() if name not in budget_sheet_names}
-        
-        if non_budget_sheets:
-            with st.expander(f"� Other Sheets ({len(non_budget_sheets)} sheets)", expanded=True):
-                for sheet_name, df in non_budget_sheets.items():
-                    if df.empty:
-                        st.write(f"• **{sheet_name}**: Empty sheet")
-                        continue
-                    
-                    st.write(f"• **{sheet_name}**: {len(df)} rows × {len(df.columns)} columns")
-                    
-                    # Show complete sheet data
-                    with st.expander(f"{sheet_name}", expanded=True):
-                        # For display, show empty cells instead of NaN
-                        display_full_df = df.fillna('')
-                        st.dataframe(display_full_df, use_container_width=True)
-                        
-                        # Download button for non-budget sheets (JSON only)
-                        json_data = df.to_json(orient='records', indent=2).encode('utf-8')
-                        st.download_button(
-                            f"⬇️ Download '{sheet_name}' as JSON",
-                            data=json_data,
-                            file_name=f"sheet_{sheet_name.replace(' ', '_')}.json",
-                            mime="application/json",
-                            key=f"json_sheet_{sheet_name}"
-                        )
-        
-        # Show summary statistics (HIDDEN)
-        # st.subheader("📊 Excel File Summary")
-        # col1, col2, col3 = st.columns(3)
-        # with col1:
-        #     st.metric("Total Sheets", len(all_sheets))
-        # with col2:
-        #     budget_count = len(budget_tables_with_names) if budget_tables_with_names else 0
-        #     st.metric("Budget Sheets", budget_count)
-        # with col3:
-        #     other_count = len(all_sheets) - budget_count
-        #     st.metric("Other Sheets", other_count)
+
+    for sheet_name, df in all_sheets.items():
+        if df.empty:
+            continue
+        df = preprocess_dataframe(df)
+        display_df = df.fillna('')
+        with st.expander(f"{sheet_name}", expanded=True):
+            st.dataframe(display_df, use_container_width=True)
+            json_data = df.to_json(orient='records', indent=2).encode('utf-8')
+            st.download_button(
+                f"⬇️ Download '{sheet_name}' as JSON",
+                data=json_data,
+                file_name=f"{sheet_name.replace(' ', '_')}.json",
+                mime="application/json",
+                key=f"json_{sheet_name}"
+            )
 
 
 def display_pdf_image_results(tables):
