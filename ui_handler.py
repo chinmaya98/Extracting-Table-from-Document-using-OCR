@@ -104,6 +104,8 @@ def display_excel_results(result):
             continue
         df = preprocess_dataframe(df)
         display_df = df.fillna('')
+        # Convert all columns to string to avoid ArrowTypeError
+        display_df = display_df.astype(str)
         with st.expander(f"{sheet_name}", expanded=True):
             st.dataframe(display_df, use_container_width=True)
             json_data = df.to_json(orient='records', indent=2).encode('utf-8')
@@ -119,7 +121,6 @@ def display_excel_results(result):
 def display_pdf_image_results(tables):
     """Display results for PDF/Image files."""
     all_cleaned_tables = []
-    
     for i, df in enumerate(tables, start=1):
         if df.empty:
             continue
@@ -127,14 +128,16 @@ def display_pdf_image_results(tables):
         # Clean and preprocess the DataFrame
         df = preprocess_dataframe(df)
         all_cleaned_tables.append(df)
-        
+        display_df = df.fillna('').astype(str)  # Ensure Arrow compatibility
         st.subheader(f"📊 Table {i}")
-        st.dataframe(df, use_container_width=True)
-        
-        # Add download button (JSON only)
+        st.dataframe(display_df, use_container_width=True)
         json_data = df.to_json(orient='records', indent=2).encode('utf-8')
-        st.download_button(f"⬇️ Download Table {i} as JSON", data=json_data, file_name=f"table_{i}.json", mime="application/json")
-
+        st.download_button(
+            f"⬇️ Download Table {i} as JSON",
+            data=json_data,
+            file_name=f"table_{i}.json",
+            mime="application/json"
+        )
 
 def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
     """Legacy function - kept for backward compatibility but deprecated."""
@@ -169,13 +172,16 @@ def display_simple_tables(tables, file_type):
     if not tables:
         st.warning(f"⚠️ No tables found in the {file_type} file.")
         return
-    
     for i, table in enumerate(tables, start=1):
         if isinstance(table, pd.DataFrame) and not table.empty:
             table = preprocess_dataframe(table)
+            display_df = table.fillna('').astype(str)  # Ensure Arrow compatibility
             st.subheader(f"📊 Table {i}")
-            st.dataframe(table, use_container_width=True)
-            
-            # Download button (JSON only)
+            st.dataframe(display_df, use_container_width=True)
             json_data = table.to_json(orient='records', indent=2).encode('utf-8')
-            st.download_button(f"⬇️ Download Table {i} as JSON", data=json_data, file_name=f"table_{i}.json", mime="application/json")
+            st.download_button(
+                f"⬇️ Download Table {i} as JSON",
+                data=json_data,
+                file_name=f"table_{i}.json",
+                mime="application/json"
+            )
