@@ -15,15 +15,43 @@ This application extracts tables from PDF, image, Excel, and CSV files, performs
 
 ---
 
-## Prerequisites
 
-- Python 3.11+
-- Docker (for container deployment)
-- Azure account with access to:
-  - Azure Container Registry (ACR)
-  - Azure App Service (Web App for Containers)
-  - Azure Document Intelligence resource
-  - Azure Blob Storage
+## System Requirements
+
+### Software Requirements
+- Python 3.8 or higher
+- Internet connection (required for Azure services)
+- Modern web browser (Chrome, Edge, Firefox, etc.) for accessing the Streamlit interface
+
+### Azure Services Required
+- **Azure Document Intelligence**: Used for OCR and document analysis
+- **Azure Blob Storage**: Used for file storage and retrieval
+
+---
+
+## Installation & Setup
+
+### 1. Environment Setup
+
+Install required Python packages:
+```sh
+pip install -r requirements.txt
+```
+
+### 2. Dependencies Installation
+
+The following packages will be installed:
+
+- `streamlit>=1.28.0`          # Web interface framework
+- `pandas>=1.5.0`              # Data manipulation
+- `python-dotenv>=0.19.0`      # Environment variable management
+- `azure-ai-documentintelligence>=1.0.0`  # Azure OCR services
+- `azure-storage-blob>=12.0.0` # Azure file storage
+- `openai>=0.28.0`             # AI processing capabilities
+- `Pillow>=9.0.0`              # Image processing
+- `filetype>=1.0.0`            # File type detection
+- `regex>=2022.0.0`            # Pattern matching
+- `PyPDF2>=3.0.0`              # PDF processing
 
 ---
 
@@ -35,12 +63,22 @@ This application extracts tables from PDF, image, Excel, and CSV files, performs
    cd Trinity_online
    ```
 
-2. **Install dependencies:**
+2. **(Optional) Create and activate a virtual environment:**
    ```sh
+   python -m venv venv
+   # On Windows:
+   venv\Scripts\activate
+   # On macOS/Linux:
+   source venv/bin/activate
+   ```
+
+3. **Install dependencies:**
+   ```sh
+   pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
-3. **Set up environment variables:**
+4. **Set up environment variables:**
    - Create a `.env` file in the project root with your Azure credentials:
      ```
      DOC_INTELLIGENCE_ENDPOINT=your-endpoint
@@ -49,7 +87,7 @@ This application extracts tables from PDF, image, Excel, and CSV files, performs
      AZURE_BLOB_CONTAINER=your-container-name
      ```
 
-4. **Run the app:**
+5. **Run the app:**
    ```sh
    streamlit run main.py
    ```
