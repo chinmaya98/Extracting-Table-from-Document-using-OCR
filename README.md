@@ -19,7 +19,7 @@ This application extracts tables from PDF, image, Excel, and CSV files, performs
 ## System Requirements
 
 ### Software Requirements
-- Python 3.8 or higher
+- Python 3.8
 - Internet connection (required for Azure services)
 - Modern web browser (Chrome, Edge, Firefox, etc.) for accessing the Streamlit interface
 
