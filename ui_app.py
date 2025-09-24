@@ -243,12 +243,27 @@ class TrinityUIApp:
                         """
                         
                         # Process with AI
-                        ai_result = self.ai_budget_extractor.process_document_intelligence_data([sheet_df], sheet_text.strip())
+                        ai_result = self.ai_budget_extractor.process_document_intelligence_data([sheet_df], sheet_text.strip(), filename)
                         
                         if ai_result.get('success', False):
-                            processed_data = ai_result['extracted_data']
-                            # Preserve original headers and make them bold (for display)
-                            processed_data = self.ai_budget_extractor.format_budget_table_with_formatting(processed_data)
+                            # Check if this is a manual review result
+                            if ai_result.get('manual_review', False):
+                                # Handle manual review result
+                                processed_data = ai_result.get('extracted_data', pd.DataFrame())
+                                if not processed_data.empty:
+                                    sheet_results.append({
+                                        'sheet_name': sheet_name,
+                                        'data': processed_data,
+                                        'original_headers': list(sheet_df.columns),
+                                        'rows': len(processed_data),
+                                        'manual_review': True,
+                                        'warnings': ai_result.get('warnings', []),
+                                        'summary': ai_result.get('summary', '')
+                                    })
+                            else:
+                                processed_data = ai_result['extracted_data']
+                                # Preserve original headers and make them bold (for display)
+                                processed_data = self.ai_budget_extractor.format_budget_table_with_formatting(processed_data)
                         else:
                             # Use fallback processing for this sheet
                             processed_data = self.ai_budget_extractor._fallback_processing([sheet_df])
@@ -364,10 +379,33 @@ class TrinityUIApp:
                 
                 if tables:
                     # Use AI to process the extracted data
-                    ai_result = self.ai_budget_extractor.process_document_intelligence_data(tables, text)
+                    ai_result = self.ai_budget_extractor.process_document_intelligence_data(tables, text, filename)
                     
                     if ai_result.get('success', False):
-                        budget_data = ai_result['extracted_data']
+                        # Check if this is a manual review result
+                        if ai_result.get('manual_review', False):
+                            # Handle manual review result
+                            from agent_manual import display_manual_review_ui
+                            
+                            status_text.text("Step 4/5: Manual AI review completed!")
+                            progress_bar.progress(80)
+                            
+                            # Display manual review results
+                            display_manual_review_ui(ai_result.get('manual_review_data', {}))
+                            
+                            status_text.text("Step 5/5: Manual review complete!")
+                            progress_bar.progress(100)
+                            
+                            return {
+                                'success': True,
+                                'manual_review': True,
+                                'extracted_data': ai_result.get('extracted_data', pd.DataFrame()),
+                                'filename': filename,
+                                'warnings': ai_result.get('warnings', []),
+                                'summary': ai_result.get('summary', '')
+                            }
+                        else:
+                            budget_data = ai_result['extracted_data']
                         
                         # Step 4: Final formatting
                         status_text.text("Step 4/5: Formatting output...")
@@ -493,6 +531,14 @@ class TrinityUIApp:
         """Display the processing results."""
         if not result:
             return
+        
+        # Handle manual review results
+        if result.get('manual_review', False):
+            # Manual review results were already displayed during processing
+            # Just show final status
+            st.success("🔍 Manual AI Review completed!")
+            st.info("The manual review results were displayed above. Please verify all extracted data manually.")
+            return
             
         # Handle summary-only results (AI analysis without table extraction)
         if result.get('summary_only', False):
@@ -565,11 +611,11 @@ class TrinityUIApp:
                     for header in original_headers:
                         st.write(f"• **{header}**")
                 
-                # Apply column selection to show only 3 best columns
-                selected_data, selection_info = apply_column_selection(sheet_data, max_columns=3)
+                # Apply column selection to show all available columns
+                selected_data, selection_info = apply_column_selection(sheet_data)
                 
-                # Display column selection information
-                if selection_info['total_original'] > 3:
+                # Display column selection information if any optimization was applied
+                if selection_info['total_original'] > selection_info['total_selected']:
                     st.info(f"📊 **Display Optimization**: Showing {selection_info['total_selected']} most relevant columns out of {selection_info['total_original']} total columns")
                     
                     with st.expander(f"🔍 Column Selection Details", expanded=False):
@@ -603,7 +649,7 @@ class TrinityUIApp:
                     # CSV download for this sheet (selected columns)
                     csv_data = selected_data.to_csv(index=False)
                     st.download_button(
-                        label=f"Download {sheet_name} as CSV (Top 3 Columns)",
+                        label=f"Download {sheet_name} as CSV (All Columns)",
                         data=csv_data,
                         file_name=f"budget_{sheet_name}_{filename.split('.')[0]}_selected.csv",
                         mime="text/csv",
@@ -630,7 +676,7 @@ class TrinityUIApp:
                     excel_data = excel_buffer.getvalue()
                     
                     st.download_button(
-                        label=f"Download {sheet_name} as Excel (Top 3 Columns)",
+                        label=f"Download {sheet_name} as Excel (All Columns)",
                         data=excel_data,
                         file_name=f"budget_{sheet_name}_{filename.split('.')[0]}_selected.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -754,11 +800,11 @@ class TrinityUIApp:
                     for info in result['sheet_info']:
                         st.write(f"• {info}")
             
-            # Apply column selection to show only 3 best columns
-            selected_data, selection_info = apply_column_selection(data, max_columns=3)
+            # Apply column selection to show all available columns
+            selected_data, selection_info = apply_column_selection(data)
             
-            # Display column selection information
-            if selection_info['total_original'] > 3:
+            # Display column selection information if any optimization was applied
+            if selection_info['total_original'] > selection_info['total_selected']:
                 st.info(f"📊 **Display Optimization**: Showing {selection_info['total_selected']} most relevant columns out of {selection_info['total_original']} total columns")
                 
                 with st.expander(f"🔍 Column Selection Details", expanded=False):
@@ -792,7 +838,7 @@ class TrinityUIApp:
                 # CSV download (selected columns)
                 csv_data = selected_data.to_csv(index=False)
                 st.download_button(
-                    label="Download as CSV (Top 3 Columns)",
+                    label="Download as CSV (All Columns)",
                     data=csv_data,
                     file_name=f"budget_data_{filename.split('.')[0]}_selected.csv",
                     mime="text/csv"
@@ -818,7 +864,7 @@ class TrinityUIApp:
                 excel_data = excel_buffer.getvalue()
                 
                 st.download_button(
-                    label="Download as Excel (Top 3 Columns)",
+                    label="Download as Excel (All Columns)",
                     data=excel_data,
                     file_name=f"budget_data_{filename.split('.')[0]}_selected.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -828,7 +874,7 @@ class TrinityUIApp:
                 # JSON download (selected columns)
                 json_data = selected_data.to_json(orient='records', indent=2)
                 st.download_button(
-                    label="Download as JSON (Top 3 Columns)",
+                    label="Download as JSON (All Columns)",
                     data=json_data,
                     file_name=f"budget_data_{filename.split('.')[0]}_selected.json",
                     mime="application/json"

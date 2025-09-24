@@ -32,17 +32,21 @@ class AIBudgetExtractor:
             self.openai_client = None
             self.deployment_name = None
     
-    def process_document_intelligence_data(self, tables: List[pd.DataFrame], text: str) -> Dict:
+    def process_document_intelligence_data(self, tables: List[pd.DataFrame], text: str, filename: str = "") -> Dict:
         """
         Process extracted tables and text using AI to identify and format budget data.
         
         Args:
             tables: List of DataFrames extracted by Document Intelligence
             text: Extracted text/paragraphs from Document Intelligence
+            filename: Original filename for context in manual review
             
         Returns:
             Dictionary containing processed budget data and metadata
         """
+        # Store filename for manual review agent access
+        self._current_filename = filename
+        
         if not self.openai_client:
             return self._fallback_processing(tables, text)
         
@@ -51,10 +55,21 @@ class AIBudgetExtractor:
             budget_tables = self._identify_budget_tables_with_ai(tables, text)
             
             if not budget_tables:
+                # Trigger manual review agent when no structured budget tables found
+                from agent_manual import trigger_manual_review
+                print("🔍 No structured budget tables found. Triggering Manual Review Agent...")
+                manual_review_result = trigger_manual_review(text, tables, getattr(self, '_current_filename', 'unknown'))
+                
                 return {
-                    'success': False,
-                    'error': 'No budget-related tables found by AI analysis',
-                    'extracted_data': pd.DataFrame()
+                    'success': manual_review_result.get('success', False),
+                    'method': 'manual_ai_review',
+                    'manual_review': True,
+                    'manual_review_data': manual_review_result,
+                    'error': 'No structured budget tables found - manual review performed',
+                    'extracted_data': manual_review_result.get('table', pd.DataFrame()),
+                    'summary': manual_review_result.get('summary', ''),
+                    'warnings': manual_review_result.get('warnings', []),
+                    'found_financial_data': manual_review_result.get('found_financial_data', False)
                 }
             
             # Step 2: AI processes each budget table into 3-column format
@@ -166,8 +181,7 @@ class AIBudgetExtractor:
         2. DO NOT use generic names like "Label", "Description", "Amount"
         3. Make headers BOLD using **Header Name** format
         4. Preserve the exact column names from the source document
-        5. If table has 3+ columns, use the first 3 most relevant columns
-        6. If less than 3 columns, duplicate the most appropriate column for missing ones
+        5. Use all relevant columns available in the table
         
         FORMATTING RULES:
         1. Extract only budget-related rows (skip empty rows)
@@ -401,9 +415,8 @@ Rules:
 4. Remove empty rows and columns
 5. Format amounts as numbers (remove currency symbols for processing)
 6. Keep original header names - do NOT change to generic names like Label/Description/Amount
-7. If original table has 3+ columns, use the 3 most relevant ones
-8. If less than 3 columns, duplicate or adapt as needed but keep original naming pattern
-9. Return data in JSON format preserving original column names"""
+7. Use all available columns from the original table
+8. Return data in JSON format preserving original column names"""
                     },
                     {
                         "role": "user", 
@@ -549,43 +562,21 @@ CRITICAL: Use the EXACT original column headers from the document, not generic n
         
         return any(keyword in table_str for keyword in budget_keywords)
     
-    def _fallback_processing(self, tables: List[pd.DataFrame]) -> pd.DataFrame:
+    def _fallback_processing(self, tables: List[pd.DataFrame], text: str = None) -> pd.DataFrame:
         """Fallback method when AI processing fails - preserves original headers."""
         for table in tables:
             if self._basic_budget_check(table):
                 # Preserve original headers with bold formatting
                 original_headers = list(table.columns)
                 
-                if len(table.columns) >= 3:
-                    # Use first 3 columns and keep original headers
-                    result = table.iloc[:, :3].copy()
-                    result.columns = original_headers[:3]
-                    
-                    # Add bold header row at the top
-                    bold_headers = {col: f"**{col}**" for col in result.columns}
-                    header_row = pd.DataFrame([bold_headers])
-                    result = pd.concat([header_row, result], ignore_index=True)
-                    
-                elif len(table.columns) == 2:
-                    # Duplicate the last column to make it 3 columns
-                    result = table.copy()
-                    result[original_headers[-1] + '_2'] = table.iloc[:, -1]
-                    
-                    # Add bold header row
-                    bold_headers = {col: f"**{col}**" for col in result.columns}
-                    header_row = pd.DataFrame([bold_headers])
-                    result = pd.concat([header_row, result], ignore_index=True)
-                    
-                elif len(table.columns) == 1:
-                    # Create 3 columns by duplicating the single column
-                    result = table.copy()
-                    result[original_headers[0] + '_desc'] = table.iloc[:, 0]
-                    result[original_headers[0] + '_amount'] = table.iloc[:, 0]
-                    
-                    # Add bold header row
-                    bold_headers = {col: f"**{col}**" for col in result.columns}
-                    header_row = pd.DataFrame([bold_headers])
-                    result = pd.concat([header_row, result], ignore_index=True)
+                # Use all columns and keep original headers
+                result = table.copy()
+                result.columns = original_headers
+                
+                # Add bold header row at the top
+                bold_headers = {col: f"**{col}**" for col in result.columns}
+                header_row = pd.DataFrame([bold_headers])
+                result = pd.concat([header_row, result], ignore_index=True)
                 
                 return result.dropna()
         

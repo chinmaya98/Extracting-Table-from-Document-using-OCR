@@ -30,13 +30,13 @@ class ColumnSelector:
             'status', 'approved', 'pending', 'completed', 'notes', 'comments'
         ]
     
-    def select_best_columns(self, df: pd.DataFrame, max_columns: int = 3) -> List[str]:
+    def select_best_columns(self, df: pd.DataFrame, max_columns: int = None) -> List[str]:
         """
         Select the best columns to display based on content and priority.
         
         Args:
             df: DataFrame to analyze
-            max_columns: Maximum number of columns to select
+            max_columns: Maximum number of columns to select (None for no limit)
             
         Returns:
             List of column names to display
@@ -47,8 +47,8 @@ class ColumnSelector:
         available_columns = list(df.columns)
         selected_columns = []
         
-        # If we have fewer columns than requested, return all
-        if len(available_columns) <= max_columns:
+        # If no max_columns specified or we have fewer columns than requested, return all
+        if max_columns is None or len(available_columns) <= max_columns:
             return available_columns
         
         # Score each column based on priority and content
@@ -79,9 +79,12 @@ class ColumnSelector:
             
             column_scores[col] = score
         
-        # Select top scoring columns
+        # Select top scoring columns (or all if no limit)
         sorted_columns = sorted(column_scores.items(), key=lambda x: x[1], reverse=True)
-        selected_columns = [col for col, score in sorted_columns[:max_columns]]
+        if max_columns is not None:
+            selected_columns = [col for col, score in sorted_columns[:max_columns]]
+        else:
+            selected_columns = [col for col, score in sorted_columns]
         
         # Ensure we maintain original order when possible
         ordered_selection = [col for col in available_columns if col in selected_columns]
@@ -170,13 +173,13 @@ class ColumnSelector:
         }
 
 
-def apply_column_selection(df: pd.DataFrame, max_columns: int = 3) -> Tuple[pd.DataFrame, Dict[str, any]]:
+def apply_column_selection(df: pd.DataFrame, max_columns: int = None) -> Tuple[pd.DataFrame, Dict[str, any]]:
     """
     Apply intelligent column selection to a DataFrame.
     
     Args:
         df: Input DataFrame
-        max_columns: Maximum number of columns to select
+        max_columns: Maximum number of columns to select (None for no limit)
         
     Returns:
         Tuple of (selected_dataframe, selection_info)
