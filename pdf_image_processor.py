@@ -40,7 +40,7 @@ class PDFImageProcessor:
         """
         try:
             poller = self.client.begin_analyze_document(
-                model_id="prebuilt-layout",
+                model_id="prebuilt-document",
                 body=pdf_bytes,
                 content_type="application/pdf"
             )
@@ -74,7 +74,7 @@ class PDFImageProcessor:
                 raise ValueError("Unsupported or undetectable image type for table extraction.")
             
             poller = self.client.begin_analyze_document(
-                model_id="prebuilt-layout",
+                model_id="prebuilt-document",
                 body=image_bytes,
                 content_type=kind.mime
             )
@@ -174,10 +174,10 @@ class PDFImageProcessor:
         df = pd.concat([df, df_conf_df], axis=1)
         
         df = PDFImageProcessor.clean_table(df)
-        
-        # Table-level confidence (average of all cells)
-        df._confidence_score = round(df_conf_df.to_numpy().mean(), 2)
-        
+ 
+        # Preserve confidence score in DataFrame metadata
+        df.attrs["confidence_score"] = round(df_conf_df.to_numpy().mean(), 2)
+ 
         return df
     
     @staticmethod
@@ -240,7 +240,7 @@ class PDFImageProcessor:
                 'column_names': [col for col in df.columns if not col.endswith("_conf")],
                 'has_monetary_data': contains_money(df),
                 'is_empty': df.empty,
-                'confidence_score': getattr(df, "_confidence_score", 0.0)
+                'confidence_score': df.attrs.get("confidence_score", 0.0)
             }
             metadata['table_info'].append(table_info)
         
