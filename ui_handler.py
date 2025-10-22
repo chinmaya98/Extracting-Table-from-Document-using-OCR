@@ -48,8 +48,7 @@ def standardize_dataframe(df):
 
     df.columns = [str(col) for col in df.columns]
     
-    for col in df.columns:
-        df[col] = df[col].astype('object').where(df[col].notna(), '')
+    df = df.fillna("").infer_objects(copy=False)
     
     return df
 
@@ -103,9 +102,7 @@ def display_excel_results(result):
         if df.empty:
             continue
         df = preprocess_dataframe(df)
-        display_df = df.fillna('')
-        # Convert all columns to string to avoid ArrowTypeError
-        display_df = display_df.astype(str)
+        display_df = df.fillna("").infer_objects(copy=False).astype(str)
         with st.expander(f"{sheet_name}", expanded=True):
             st.dataframe(display_df, use_container_width=True)
             json_data = df.to_json(orient='records', indent=2).encode('utf-8')
@@ -128,7 +125,7 @@ def display_pdf_image_results(tables):
         # Clean and preprocess the DataFrame
         df = preprocess_dataframe(df)
         all_cleaned_tables.append(df)
-        display_df = df.fillna('').astype(str)  # Ensure Arrow compatibility
+        display_df = df.fillna('').infer_objects(copy=False).astype(str)
         st.subheader(f"📊 Table {i}")
         st.dataframe(display_df, use_container_width=True)
         json_data = df.to_json(orient='records', indent=2).encode('utf-8')
@@ -158,7 +155,7 @@ def extract_and_display_tables(blob_manager, extractor, selected_blob_file):
                 # This would need the Excel processor
                 st.error("Excel processing requires the new orchestrator. Please use main.py with --mode web")
             elif ext in [".png", ".jpg", ".jpeg", ".tiff"]:
-                tables = extractor.extract_from_image(blob_bytes)
+                tables = extractor.extract_from_.extract_from_image(blob_bytes)
                 display_simple_tables(tables, "Image")
             else:
                 st.error("Unsupported file format")
@@ -175,7 +172,7 @@ def display_simple_tables(tables, file_type):
     for i, table in enumerate(tables, start=1):
         if isinstance(table, pd.DataFrame) and not table.empty:
             table = preprocess_dataframe(table)
-            display_df = table.fillna('').astype(str)  # Ensure Arrow compatibility
+            display_df = table.fillna("").infer_objects(copy=False).astype(str)
             st.subheader(f"📊 Table {i}")
             st.dataframe(display_df, use_container_width=True)
             json_data = table.to_json(orient='records', indent=2).encode('utf-8')
