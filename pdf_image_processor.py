@@ -2,7 +2,6 @@
 PDF and Image Table Extraction Module
 Handles PDF files and image files (JPG, PNG, TIFF) using Azure Document Intelligence.
 """
-
 import io
 import os
 import re
@@ -49,14 +48,12 @@ class PDFImageProcessor:
             
             tables = []
             
-            # --- FIX for 'AnalyzeResult' object has no attribute 'words' ---
             # Words are contained within pages, not at the top-level result
             all_words = []
             if result.pages:
                 for page in result.pages:
                     if page.words:
                         all_words.extend(page.words)
-            # --- END FIX ---
 
             if result.tables:
                 print(f"[DIAGNOSTIC] Azure found {len(result.tables)} table(s) in the document.")
@@ -98,14 +95,12 @@ class PDFImageProcessor:
             
             tables = []
 
-            # --- FIX for 'AnalyzeResult' object has no attribute 'words' ---
             # Words are contained within pages, not at the top-level result
             all_words = []
             if result.pages:
                 for page in result.pages:
                     if page.words:
                         all_words.extend(page.words)
-            # --- END FIX ---
 
             if result.tables:
                 for table in result.tables:
@@ -209,12 +204,8 @@ class PDFImageProcessor:
             
             cells[cell.row_index][cell.column_index] = (cell_content, avg_conf)
         
-        # ---
-        # FIX: Always use generic headers to avoid misinterpreting page titles.
-        # This prevents the garbled column names problem seen in the screenshot.
         headers = [f"Column_{i+1}" for i in range(ncols)]
         data = cells # Use all rows as data
-        # ---
         
         df_values = [[v[0] for v in row] for row in data]
         df_conf = [[v[1] for v in row] for row in data]
@@ -252,7 +243,7 @@ class PDFImageProcessor:
         content_cols = [col for col in df.columns if not col.endswith("_conf")]
         
         # Check if all content columns in a row are empty/whitespace
-        if not content_cols: # Handle case where df might only have _conf cols
+        if not content_cols:
              return pd.DataFrame()
 
         is_blank = df[content_cols].apply(
@@ -299,7 +290,6 @@ class PDFImageProcessor:
                 'column_names': content_cols,
                 'has_monetary_data': contains_money(df),
                 'is_empty': df.empty,
-                # This 'confidence_score' is the mean of all cell confidences
                 'confidence_score': df.attrs.get("confidence_score", 0.0)
             }
             metadata['table_info'].append(table_info)
